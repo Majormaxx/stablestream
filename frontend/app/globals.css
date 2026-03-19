@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+:root {
+  --bg-deep:      #050A14;
+  --bg-card:      #080F1E;
+  --bg-border:    #0D1F3C;
+  --blue-500:     #0066FF;
+  --blue-400:     #00AAFF;
+  --cyan-400:     #00D4FF;
+  --gold-400:     #FFB800;
+  --text-primary: #F0F4FF;
+  --text-muted:   #4A6FA5;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background-color: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Focus visible — keyboard navigation ────────────────── */
+:focus-visible {
+  outline: 2px solid #00AAFF;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Remove outline for mouse users only */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── Skip to content link (accessibility) ───────────────── */
+.skip-to-content {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  background: #0066FF;
+  color: #fff;
+  padding: 10px 20px;
+  font-weight: 700;
+  z-index: 9999;
+  text-decoration: none;
+  border-radius: 0 0 8px 0;
+  transition: top 0.2s;
+}
+.skip-to-content:focus {
+  top: 0;
+}
+
+/* ── Animated gradient text ─────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(90deg, #0066FF, #00AAFF, #00D4FF, #FFB800);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 6s ease-in-out infinite;
+}
+
+/* ── Keyframes ──────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes streamPulse {
+  0%, 100% { opacity: 0.7; }
+  50%       { opacity: 1; }
+}
+
+/* Skeleton shimmer used in components */
+@keyframes skeletonShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ── Animation utility classes ──────────────────────────── */
+.fade-up          { animation: fadeUp 0.7s ease-out forwards; }
+.fade-up-delay-1  { opacity: 0; animation: fadeUp 0.7s ease-out 0.15s forwards; }
+.fade-up-delay-2  { opacity: 0; animation: fadeUp 0.7s ease-out 0.30s forwards; }
+.fade-up-delay-3  { opacity: 0; animation: fadeUp 0.7s ease-out 0.45s forwards; }
+.fade-up-delay-4  { opacity: 0; animation: fadeUp 0.7s ease-out 0.60s forwards; }
+
+.stream-pulse { animation: streamPulse 3s ease-in-out infinite; }
+
+/* ── Card hover ─────────────────────────────────────────── */
+.card-hover {
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.card-hover:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 24px 64px rgba(0, 102, 255, 0.18);
+  border-color: rgba(0, 170, 255, 0.4) !important;
+}
+.card-hover:focus-within {
+  box-shadow: 0 0 0 2px #00AAFF, 0 24px 64px rgba(0, 102, 255, 0.12);
+}
+
+/* ── Border glow card ───────────────────────────────────── */
+.border-glow {
+  border: 1px solid rgba(0, 102, 255, 0.2);
+  background: linear-gradient(135deg, rgba(8,15,30,0.9), rgba(5,10,20,0.9));
+}
+
+/* ── Reduce motion — respect user preferences ───────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

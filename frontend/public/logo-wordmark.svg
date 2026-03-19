@@ -1,0 +1,47 @@
+<svg width="600" height="120" viewBox="0 0 600 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="streamGradW" x1="0" y1="30" x2="110" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0066FF"/>
+      <stop offset="100%" stop-color="#00D4FF"/>
+    </linearGradient>
+    <linearGradient id="accentGradW" x1="20" y1="60" x2="90" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFB800"/>
+      <stop offset="100%" stop-color="#FF8C00"/>
+    </linearGradient>
+    <linearGradient id="textGrad" x1="150" y1="0" x2="600" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#B0C4DE"/>
+    </linearGradient>
+    <filter id="glowW">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Mark: compact hex -->
+  <polygon points="55,8 101,34 101,86 55,112 9,86 9,34" fill="#050A14" stroke="url(#streamGradW)" stroke-width="2"/>
+
+  <!-- Upper stream -->
+  <path d="M 24 46 C 32 36, 48 34, 55 43 C 62 52, 73 53, 86 44"
+        stroke="url(#streamGradW)" stroke-width="5" stroke-linecap="round" fill="none" filter="url(#glowW)"/>
+  <!-- Lower stream -->
+  <path d="M 24 74 C 35 64, 48 64, 55 73 C 62 82, 73 80, 86 72"
+        stroke="url(#streamGradW)" stroke-width="5" stroke-linecap="round" fill="none" filter="url(#glowW)"/>
+  <!-- Gold bar -->
+  <rect x="28" y="57" width="54" height="3" rx="1.5" fill="url(#accentGradW)"/>
+  <!-- Center dot -->
+  <circle cx="55" cy="59" r="4" fill="#FFB800"/>
+  <circle cx="55" cy="59" r="2" fill="#FFFFFF"/>
+
+  <!-- Wordmark -->
+  <text x="130" y="72" font-family="'Inter', 'Segoe UI', system-ui, sans-serif"
+        font-size="46" font-weight="700" letter-spacing="-1" fill="url(#textGrad)">
+    Stable<tspan fill="#00AAFF">Stream</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="131" y="95" font-family="'Inter', 'Segoe UI', system-ui, sans-serif"
+        font-size="13" font-weight="400" letter-spacing="3" fill="#4A6FA5" text-anchor="start">
+    YIELD WITHOUT LIMITS
+  </text>
+</svg>

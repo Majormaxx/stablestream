@@ -10,12 +10,15 @@ import {ImmutableState} from "v4-periphery/src/base/ImmutableState.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 
 // OpenZeppelin (sourced from v4-core's submodule)
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -25,8 +28,11 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 // StableStream internals
 import {YieldRouter} from "./YieldRouter.sol";
+import {StableStreamNFT} from "./StableStreamNFT.sol";
 import {RangeCalculator} from "./libraries/RangeCalculator.sol";
 import {YieldAccounting} from "./libraries/YieldAccounting.sol";
+import {TransientStorage} from "./libraries/TransientStorage.sol";
+import {DynamicFeeModule} from "./DynamicFeeModule.sol";
 
 /// @title StableStreamHook
 /// @notice Uniswap v4 hook that automatically routes idle USDC from out-of-range
@@ -41,7 +47,7 @@ import {YieldAccounting} from "./libraries/YieldAccounting.sol";
 ///
 ///           1. deposit()             — user USDC → hook → add liquidity in pool
 ///           2. afterSwap()           — detects out-of-range positions, emits events
-///           3. beforeSwap()          — flags positions needing JIT recall
+///           3. beforeSwap()          — flags positions for JIT recall; returns dynamic fee
 ///           4. RSC (Reactive Net.)   — watches events, calls routeToYield() / recallFromYield()
 ///           5. routeToYield()        — remove idle liquidity → deposit in yield source
 ///           6. recallFromYield()     — withdraw from yield → re-add liquidity to pool
@@ -56,9 +62,23 @@ import {YieldAccounting} from "./libraries/YieldAccounting.sol";
 ///         ───────────
 ///         positionId = keccak256(abi.encode(owner, poolId, tickLower, tickUpper))
 ///
+///         EIP-1153 Transient Storage
+///         ──────────────────────────
+///         The pendingRecall flag uses TSTORE/TLOAD (EIP-1153) instead of a
+///         persistent mapping.  This saves ~22,000 gas per flag vs. cold SSTORE,
+///         and the RSC's own deduplication logic (per-position cooldown) provides
+///         the cross-transaction idempotency guarantee.
+///
+///         Dynamic Fees
+///         ────────────
+///         For pools initialized with LPFeeLibrary.DYNAMIC_FEE_FLAG, beforeSwap
+///         returns a fee computed by DynamicFeeModule that scales with the fraction
+///         of pool capital currently deployed to yield sources.
+///
 /// @custom:security-contact security@stablestream.xyz
 contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    using CurrencyLibrary for Currency;
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
     using YieldAccounting for YieldAccounting.YieldState;
@@ -79,6 +99,8 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     struct TrackedPosition {
         /// @dev  LP who deposited (receives capital + yield on exit)
         address owner;
+        /// @dev  Which stablecoin this position manages (multi-token support)
+        address asset;
         /// @dev  Pool this position belongs to
         PoolId poolId;
         /// @dev  Concentrated range lower tick
@@ -107,6 +129,11 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     ///         Prevents gas waste when the tick oscillates rapidly near a range boundary.
     uint256 public constant ROUTE_COOLDOWN = 60 seconds;
 
+    /// @notice EIP-1153 transient storage prefix for pendingRecall flags.
+    ///         Using a keccak256 prefix prevents slot collisions with other features.
+    bytes32 private constant PENDING_RECALL_PREFIX =
+        keccak256("StableStream.pendingRecall.v1");
+
     // -------------------------------------------------------------------------
     // Immutable state
     // -------------------------------------------------------------------------
@@ -114,7 +141,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     /// @notice YieldRouter that selects and interacts with yield adapters
     YieldRouter public immutable yieldRouter;
 
-    /// @notice USDC ERC-20 token managed by this hook
+    /// @notice USDC ERC-20 token managed by this hook (primary stablecoin)
     IERC20 public immutable usdc;
 
     // -------------------------------------------------------------------------
@@ -128,19 +155,33 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     mapping(address owner => bytes32[]) public ownerPositions;
 
     /// @notice Per-pool ordered list of position IDs (for O(n) scans in callbacks)
-    /// @dev    In production, replace with a doubly-linked list to keep gas bounded.
-    ///         For the hackathon, stablecoin pools typically hold few managed positions.
     mapping(PoolId poolId => bytes32[]) private _poolPositionIds;
 
     /// @notice Last-known tick per pool, updated on every afterSwap
     mapping(PoolId poolId => int24) private _prevTicks;
 
-    /// @notice Set to true in beforeSwap when a swap would re-enter a position's range.
-    ///         The RSC watches this flag and calls recallFromYield() in the next block.
-    mapping(bytes32 positionId => bool) public pendingRecall;
+    /// @notice Total USDC principal tracked per pool (in-pool + in-yield).
+    ///         Used by DynamicFeeModule to compute the yield utilisation ratio.
+    mapping(PoolId poolId => uint256) public poolTotalCapital;
+
+    /// @notice USDC currently routed to external yield sources per pool.
+    ///         Updated on routeToYield() and recallFromYield().
+    mapping(PoolId poolId => uint256) public poolYieldCapital;
+
+    /// @notice Whitelisted stablecoin tokens for multi-token support.
+    ///         Only whitelisted tokens can open managed positions.
+    mapping(address token => bool) public whitelistedStables;
+
+    /// @notice Maps each whitelisted stablecoin to its dedicated YieldRouter.
+    ///         Allows per-token yield strategy configuration.
+    mapping(address token => address) public tokenRouters;
 
     /// @notice Address of the Reactive Smart Contract authorised to call routing functions
     address public reactiveContract;
+
+    /// @notice Optional ERC-721 NFT contract for transferable position receipts.
+    ///         If address(0), NFT minting/burning is skipped (backwards compatible).
+    StableStreamNFT public nft;
 
     // -------------------------------------------------------------------------
     // Errors
@@ -156,6 +197,10 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     error RoutingCooldownActive(bytes32 positionId, uint256 unlocksAt);
     error UnauthorizedRoutingCaller();
     error ZeroAmount();
+
+    /// @notice Thrown in beforeRemoveLiquidity when a position's capital is in yield.
+    ///         The LP must call withdraw() which handles the recall atomically.
+    error CapitalInYield(bytes32 positionId);
 
     // -------------------------------------------------------------------------
     // Events
@@ -175,7 +220,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     ///         The RSC watches this to trigger routeToYield().
     event PositionLeftRange(bytes32 indexed positionId, int24 newTick);
 
-    /// @notice Emitted when beforeSwap or afterSwap detects a swap will/did re-enter range.
+    /// @notice Emitted when beforeSwap detects a swap will re-enter a position's range.
     ///         The RSC watches this to trigger recallFromYield() JIT.
     event PositionEnteredRange(bytes32 indexed positionId, int24 currentTick);
 
@@ -202,6 +247,12 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         uint256 yieldEarned
     );
 
+    /// @notice Emitted when a stablecoin is whitelisted for multi-token support
+    event StablecoinWhitelisted(address indexed token, address indexed router);
+
+    /// @notice Emitted when the NFT contract address is set
+    event NFTContractSet(address indexed nftContract);
+
     // -------------------------------------------------------------------------
     // Constructor
     // -------------------------------------------------------------------------
@@ -218,6 +269,10 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     ) SafeCallback(_poolManager) Ownable(_owner) {
         yieldRouter = _yieldRouter;
         usdc = IERC20(_usdc);
+
+        // Pre-whitelist USDC as the default managed stablecoin
+        whitelistedStables[_usdc] = true;
+        tokenRouters[_usdc] = address(_yieldRouter);
     }
 
     // -------------------------------------------------------------------------
@@ -236,7 +291,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
             afterAddLiquidity: true,       // register / track deposits
             beforeRemoveLiquidity: true,   // block direct removal when capital is in yield
             afterRemoveLiquidity: false,
-            beforeSwap: true,              // flag positions for JIT recall
+            beforeSwap: true,              // flag positions for JIT recall; dynamic fee
             afterSwap: true,               // detect range-exit events
             beforeDonate: false,
             afterDonate: false,
@@ -314,7 +369,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         TrackedPosition storage pos = positions[posId];
 
         if (pos.owner != address(0) && !pos.closed && pos.yieldDeposited > 0) {
-            revert("StableStream: capital is in yield; call withdraw() instead");
+            revert CapitalInYield(posId);
         }
 
         return IHooks.beforeRemoveLiquidity.selector;
@@ -334,7 +389,11 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
 
     /// @inheritdoc IHooks
     /// @dev  Lightweight pre-swap scan: flags out-of-yield positions that a swap might
-    ///       re-enter, so the RSC can execute a JIT recall before the next block.
+    ///       re-enter so the RSC can execute a JIT recall.
+    ///
+    ///       For dynamic-fee pools (LPFeeLibrary.DYNAMIC_FEE_FLAG), also returns the
+    ///       fee computed by DynamicFeeModule based on current yield utilisation.
+    ///
     ///       We intentionally do NOT call YieldRouter here — PoolManager's reentrancy
     ///       lock prevents external calls that loop back into the pool.
     function beforeSwap(
@@ -350,27 +409,41 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         uint256 len = poolIds.length;
 
         for (uint256 i = 0; i < len; ) {
-            bytes32 pid_ = poolIds[i];
-            TrackedPosition storage pos = positions[pid_];
+            bytes32 posId = poolIds[i];
+            TrackedPosition storage pos = positions[posId];
 
-            if (!pos.closed && pos.yieldDeposited > 0 && !pendingRecall[pid_]) {
-                bool couldEnter = RangeCalculator.swapCouldEnterRange(
-                    currentTick,
-                    params.zeroForOne,
-                    params.sqrtPriceLimitX96,
-                    pos.tickLower,
-                    pos.tickUpper
-                );
-                if (couldEnter) {
-                    pendingRecall[pid_] = true;
-                    emit PositionEnteredRange(pid_, currentTick);
+            if (!pos.closed && pos.yieldDeposited > 0) {
+                // Check transient storage: if already flagged this tx, skip re-emission
+                bytes32 slot = TransientStorage.slotFor(PENDING_RECALL_PREFIX, posId);
+                if (!TransientStorage.tload(slot)) {
+                    bool couldEnter = RangeCalculator.swapCouldEnterRange(
+                        currentTick,
+                        params.zeroForOne,
+                        params.sqrtPriceLimitX96,
+                        pos.tickLower,
+                        pos.tickUpper
+                    );
+                    if (couldEnter) {
+                        TransientStorage.tstore(slot, true);
+                        emit PositionEnteredRange(posId, currentTick);
+                    }
                 }
             }
 
             unchecked { ++i; }
         }
 
-        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        // Dynamic fee: only returned for pools initialised with DYNAMIC_FEE_FLAG.
+        // For static-fee pools this value is ignored by the PoolManager.
+        uint24 lpFeeOverride = 0;
+        if (LPFeeLibrary.isDynamicFee(key.fee)) {
+            lpFeeOverride = DynamicFeeModule.computeFee(
+                poolTotalCapital[pid],
+                poolYieldCapital[pid]
+            );
+        }
+
+        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, lpFeeOverride);
     }
 
     /// @inheritdoc IHooks
@@ -393,12 +466,12 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         uint256 len = poolIds.length;
 
         for (uint256 i = 0; i < len; ) {
-            bytes32 pid_ = poolIds[i];
-            TrackedPosition storage pos = positions[pid_];
+            bytes32 posId = poolIds[i];
+            TrackedPosition storage pos = positions[posId];
 
             if (!pos.closed && pos.liquidity > 0) {
                 if (RangeCalculator.crossedOutOfRange(prevTick, newTick, pos.tickLower, pos.tickUpper)) {
-                    emit PositionLeftRange(pid_, newTick);
+                    emit PositionLeftRange(posId, newTick);
                 }
             }
 
@@ -433,6 +506,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     /// @notice Opens a new managed LP position.
     ///         Transfers USDC from the caller, adds concentrated liquidity to the
     ///         specified pool range, and registers the position for yield routing.
+    ///         Mints an ERC-721 receipt NFT if the nft contract is configured.
     ///
     /// @param  key         Uniswap v4 PoolKey (must reference this hook)
     /// @param  tickLower   Lower price tick for the position
@@ -464,6 +538,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         // Register position
         TrackedPosition storage pos = positions[positionId];
         pos.owner = msg.sender;
+        pos.asset = address(usdc);
         pos.poolId = key.toId();
         pos.tickLower = tickLower;
         pos.tickUpper = tickUpper;
@@ -472,6 +547,14 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
 
         ownerPositions[msg.sender].push(positionId);
         _poolPositionIds[key.toId()].push(positionId);
+
+        // Update pool capital tracking for dynamic fee module
+        _poolCapitalSnapshot(key.toId(), usdcAmount, 0, true);
+
+        // Mint ERC-721 receipt NFT if configured
+        if (address(nft) != address(0)) {
+            nft.mint(msg.sender, positionId);
+        }
 
         emit PositionOpened(positionId, msg.sender, key.toId(), tickLower, tickUpper, liquidity);
     }
@@ -482,6 +565,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
 
     /// @notice Closes a position and returns all capital (principal + yield) to the owner.
     ///         If capital is in a yield source, it is recalled first.
+    ///         Burns the ERC-721 receipt NFT if configured.
     ///
     /// @param  positionId  Position to close (must be owned by msg.sender)
     /// @return returned    Total USDC returned to the caller
@@ -497,6 +581,8 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         if (pos.yieldDeposited > 0 && pos.activeYieldSource != address(0)) {
             uint256 recalled = yieldRouter.recallAllFromSource(pos.activeYieldSource, address(this));
             pos.yieldState.recordWithdrawal(recalled);
+            // Update pool capital tracking
+            _poolCapitalSnapshot(pos.poolId, pos.yieldDeposited, pos.yieldDeposited, false);
             pos.yieldDeposited = 0;
             pos.activeYieldSource = address(0);
         }
@@ -511,7 +597,19 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
 
         pos.closed = true;
         pos.liquidity = 0;
-        pendingRecall[positionId] = false;
+        // Clear pending recall flag from transient storage
+        TransientStorage.tstore(
+            TransientStorage.slotFor(PENDING_RECALL_PREFIX, positionId),
+            false
+        );
+
+        // Update total capital tracking on exit
+        _poolCapitalSnapshot(pos.poolId, returned, 0, false);
+
+        // Burn receipt NFT if configured
+        if (address(nft) != address(0)) {
+            nft.burn(positionId);
+        }
 
         if (returned > 0) {
             usdc.safeTransfer(msg.sender, returned);
@@ -563,7 +661,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
 
         if (recovered == 0) return;
 
-        // Route USDC to best yield source
+        // Route USDC to best yield source via router
         usdc.forceApprove(address(yieldRouter), recovered);
         address chosen = yieldRouter.routeToBestSource(recovered);
 
@@ -571,6 +669,9 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         pos.activeYieldSource = chosen;
         pos.liquidity = 0;
         pos.yieldState.recordDeposit(recovered);
+
+        // Update pool capital tracking: capital stays in pool total, moves to yield bucket
+        _poolCapitalSnapshot(pos.poolId, 0, recovered, true);
 
         emit CapitalRouted(positionId, chosen, recovered);
     }
@@ -583,8 +684,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     ///         liquidity in the pool (JIT re-entry).
     ///
     /// @dev    Only callable by the registered Reactive Smart Contract or the owner.
-    ///         The RSC calls this after a PositionEnteredRange event or when
-    ///         pendingRecall[positionId] is set.
+    ///         The RSC calls this after a PositionEnteredRange event.
     ///
     /// @param  positionId  Position to recall and re-activate
     function recallFromYield(bytes32 positionId) external nonReentrant {
@@ -598,6 +698,7 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         if (pos.yieldDeposited == 0) revert PositionNotRouted(positionId);
 
         address prevSource = pos.activeYieldSource;
+        uint256 prevYieldDeposited = pos.yieldDeposited;
 
         // Recall all capital from yield source
         uint256 beforeBal = usdc.balanceOf(address(this));
@@ -607,7 +708,15 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         pos.yieldState.recordWithdrawal(recalled);
         pos.yieldDeposited = 0;
         pos.activeYieldSource = address(0);
-        pendingRecall[positionId] = false;
+
+        // Clear pending recall flag from transient storage
+        TransientStorage.tstore(
+            TransientStorage.slotFor(PENDING_RECALL_PREFIX, positionId),
+            false
+        );
+
+        // Update pool capital tracking: move capital out of yield bucket
+        _poolCapitalSnapshot(pos.poolId, 0, prevYieldDeposited, false);
 
         // Re-add as liquidity in the pool
         bytes memory result = poolManager.unlock(
@@ -648,8 +757,34 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     // Unlock callback sub-handlers
     // -------------------------------------------------------------------------
 
-    /// @dev Adds liquidity on behalf of the depositing LP.
-    ///      Settles the USDC debt owed to PoolManager after modifyLiquidity.
+    /// @dev  Adds liquidity on behalf of the depositing LP.
+    ///       Settles the USDC debt owed to PoolManager after modifyLiquidity.
+    ///
+    /// @dev  Liquidity delta calculation (USDC = token1, ETH = token0):
+    ///
+    ///       Three price-range cases for a token1-only deposit:
+    ///
+    ///       Case A — price ≥ tickUpper (range is entirely token1):
+    ///         liq = getLiquidityForAmount1(sqrtRatioA, sqrtRatioB, usdcAmount)
+    ///         The full [tickLower, tickUpper] band is priced in USDC. ✓
+    ///
+    ///       Case B — price in (tickLower, tickUpper) (range is mixed):
+    ///         liq = getLiquidityForAmount1(sqrtRatioA, sqrtPrice, usdcAmount)
+    ///         USDC covers the [tickLower, currentPrice] segment; ETH covers
+    ///         [currentPrice, tickUpper].  Using the current price as upper bound
+    ///         gives the correct L for our token1 contribution without requiring ETH.
+    ///
+    ///       Case C — price ≤ tickLower (range is entirely token0 / ETH):
+    ///         The position holds no token1 at all; a USDC-only deposit is invalid
+    ///         and reverts to protect the user's capital.
+    ///
+    ///       Bug in the previous implementation: the original code called
+    ///       getLiquidityForAmounts(_, _, _, 0, usdcAmount).  In Case B this returns
+    ///       min(liq_from_0_ETH, liq_from_USDC) = 0, then fell back to
+    ///       getLiquidityForAmount1(sqrtRatioA, sqrtRatioB, usdcAmount) — the full-range
+    ///       formula — which overstates liquidity and causes modifyLiquidity to request
+    ///       more USDC than supplied.  In Case C the same fallback deposited USDC into
+    ///       an ETH-only band, consuming funds with no correct position recorded.
     function _handleDeposit(bytes calldata data) internal returns (bytes memory) {
         (
             ,
@@ -662,9 +797,26 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
             /* positionId */
         ) = abi.decode(data, (Action, address, PoolKey, int24, int24, uint256, bytes32));
 
-        // For stablecoin pairs (USDC/USDT) the price ≈ 1.0 and liquidity ≈ amount.
-        // A production implementation would use TickMath to compute the exact delta.
-        int256 liquidityDelta = int256(usdcAmount);
+        // Fetch current pool sqrt price and compute tick boundary sqrt prices.
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, key.toId());
+        uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+
+        // USDC is token1.  Select the correct liquidity formula for each price case.
+        uint128 liq;
+        if (sqrtPriceX96 >= sqrtRatioBX96) {
+            // Case A: price at or above tickUpper — range is entirely token1 (USDC).
+            liq = LiquidityAmounts.getLiquidityForAmount1(sqrtRatioAX96, sqrtRatioBX96, usdcAmount);
+        } else if (sqrtPriceX96 > sqrtRatioAX96) {
+            // Case B: price is inside the range — USDC covers [tickLower, currentPrice].
+            liq = LiquidityAmounts.getLiquidityForAmount1(sqrtRatioAX96, sqrtPriceX96, usdcAmount);
+        } else {
+            // Case C: price at or below tickLower — range is entirely token0 (ETH).
+            // A USDC-only deposit cannot provide any liquidity here; revert to protect funds.
+            revert("SSHook: price below range, deposit ETH or choose a higher tick range");
+        }
+
+        int256 liquidityDelta = int256(uint256(liq));
 
         IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
             tickLower: tickLower,
@@ -674,11 +826,12 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         });
 
         (BalanceDelta delta,) = poolManager.modifyLiquidity(key, params, abi.encode(true));
-
-        // Settle debts: negative delta means the hook owes the pool
         _settleDeltas(key, delta);
 
-        return abi.encode(uint128(uint256(liquidityDelta)));
+        // Suppress unused variable warning for depositor — it's decoded for completeness
+        (depositor);
+
+        return abi.encode(liq);
     }
 
     /// @dev Removes liquidity and takes the returned tokens back to this contract.
@@ -741,18 +894,33 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     // -------------------------------------------------------------------------
 
     /// @dev Transfers tokens to PoolManager to cover negative (owed) balance deltas.
+    ///      Handles both native ETH (currency.isAddressZero()) and ERC-20 tokens correctly.
+    ///
+    ///      Native ETH pattern  : poolManager.settle{value: amount}()
+    ///      ERC-20 pattern      : sync → safeTransfer → settle
     function _settleDeltas(PoolKey memory key, BalanceDelta delta) internal {
         int128 d0 = delta.amount0();
         int128 d1 = delta.amount1();
 
         if (d0 < 0) {
             uint256 owed = uint256(uint128(-d0));
-            IERC20(Currency.unwrap(key.currency0)).safeTransfer(address(poolManager), owed);
-            poolManager.settle();
+            _settleCurrency(key.currency0, owed);
         }
         if (d1 < 0) {
             uint256 owed = uint256(uint128(-d1));
-            IERC20(Currency.unwrap(key.currency1)).safeTransfer(address(poolManager), owed);
+            _settleCurrency(key.currency1, owed);
+        }
+    }
+
+    /// @dev Settles a single currency with the PoolManager, handling native ETH vs ERC-20.
+    function _settleCurrency(Currency currency, uint256 amount) internal {
+        if (currency.isAddressZero()) {
+            // Native ETH: attach value directly to settle() call.
+            poolManager.settle{value: amount}();
+        } else {
+            // ERC-20: sync balance snapshot, transfer tokens, then settle.
+            poolManager.sync(currency);
+            IERC20(Currency.unwrap(currency)).safeTransfer(address(poolManager), amount);
             poolManager.settle();
         }
     }
@@ -768,6 +936,36 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     }
 
     // -------------------------------------------------------------------------
+    // Capital accounting helper (DynamicFeeModule — WS3)
+    // -------------------------------------------------------------------------
+
+    /// @dev Updates the pool capital snapshot used by DynamicFeeModule.
+    ///      Called on deposit, withdrawal, routeToYield, and recallFromYield.
+    ///
+    /// @param pid         Pool whose capital snapshot to update
+    /// @param totalDelta  Change in total pool capital (0 if no change)
+    /// @param yieldDelta  Change in yield-deployed capital (0 if no change)
+    /// @param isDeposit   True for additions, false for removals
+    function _poolCapitalSnapshot(
+        PoolId pid,
+        uint256 totalDelta,
+        uint256 yieldDelta,
+        bool isDeposit
+    ) internal {
+        if (isDeposit) {
+            poolTotalCapital[pid] += totalDelta;
+            poolYieldCapital[pid] += yieldDelta;
+        } else {
+            poolTotalCapital[pid] = poolTotalCapital[pid] > totalDelta
+                ? poolTotalCapital[pid] - totalDelta
+                : 0;
+            poolYieldCapital[pid] = poolYieldCapital[pid] > yieldDelta
+                ? poolYieldCapital[pid] - yieldDelta
+                : 0;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Admin
     // -------------------------------------------------------------------------
 
@@ -775,6 +973,24 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     ///         Should be called once after the RSC is deployed on Reactive Network.
     function setReactiveContract(address rsc) external onlyOwner {
         reactiveContract = rsc;
+    }
+
+    /// @notice Sets or updates the ERC-721 NFT contract for position receipts.
+    ///         Pass address(0) to disable NFT minting/burning.
+    function setNFT(StableStreamNFT _nft) external onlyOwner {
+        nft = _nft;
+        emit NFTContractSet(address(_nft));
+    }
+
+    /// @notice Whitelist a stablecoin token and assign its yield router.
+    ///         Enables multi-token support beyond the primary USDC.
+    ///
+    /// @param token   ERC-20 stablecoin address (e.g. USDT, USDE, DAI)
+    /// @param router  YieldRouter configured for this token
+    function whitelistStablecoin(address token, address router) external onlyOwner {
+        whitelistedStables[token] = true;
+        tokenRouters[token] = router;
+        emit StablecoinWhitelisted(token, router);
     }
 
     // -------------------------------------------------------------------------
@@ -803,6 +1019,22 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         int24 tickUpper
     ) external pure returns (bytes32) {
         return _positionId(owner_, key.toId(), tickLower, tickUpper);
+    }
+
+    /// @notice Returns whether a position has a pending JIT recall flag set this transaction.
+    ///         Reads from transient storage — will return false in any new transaction.
+    ///
+    /// @param positionId  Position to check
+    function isPendingRecall(bytes32 positionId) external view returns (bool) {
+        return TransientStorage.tload(
+            TransientStorage.slotFor(PENDING_RECALL_PREFIX, positionId)
+        );
+    }
+
+    /// @notice Returns the dynamic fee that would be applied to a swap on `poolId`
+    ///         given the current capital snapshot.  Useful for off-chain tooling.
+    function getDynamicFee(PoolId poolId) external view returns (uint24) {
+        return DynamicFeeModule.computeFee(poolTotalCapital[poolId], poolYieldCapital[poolId]);
     }
 
     // -------------------------------------------------------------------------

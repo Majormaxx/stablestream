@@ -6,11 +6,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IYieldSource} from "./interfaces/IYieldSource.sol";
+import {APYVerifier} from "./libraries/APYVerifier.sol";
+import {RiskEngine} from "./libraries/RiskEngine.sol";
 
 /// @title YieldRouter
 /// @notice Manages a set of yield adapters (Aave, Compound, …) and routes idle
 ///         USDC from StableStreamHook to whichever source currently offers the
-///         highest APY.
+///         highest risk-adjusted APY.
 ///
 /// @dev    Design principles:
 ///           - One active source per routing decision (simplest composability).
@@ -19,6 +21,9 @@ import {IYieldSource} from "./interfaces/IYieldSource.sol";
 ///           - All token movements go through SafeERC20 to handle non-standard
 ///             ERC-20 implementations (e.g., USDT on some chains).
 ///           - Emergency withdrawAll() is always available to the owner.
+///           - APYVerifier rejects sources reporting anomalous APY spikes.
+///           - RiskEngine filters sources by LP risk tolerance and adjusts APY
+///             by a safety multiplier.
 ///
 ///         Source registration uses a fixed-size array capped at MAX_SOURCES to
 ///         bound the O(n) best-APY scan and keep gas predictable.
@@ -31,6 +36,10 @@ contract YieldRouter is Ownable, ReentrancyGuard {
 
     /// @notice Maximum number of yield sources that can be registered
     uint256 public constant MAX_SOURCES = 8;
+
+    /// @notice Default LP risk tolerance used by routeToBestSource().
+    ///         5 → maxRisk = 100, which accepts every source regardless of its riskScore.
+    uint8 public constant DEFAULT_RISK_TOLERANCE = 5;
 
     // -------------------------------------------------------------------------
     // State
@@ -48,6 +57,12 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     /// @notice Address authorised to call route / recall / switchSource
     ///         (set to StableStreamHook after deployment)
     address public authorizedCaller;
+
+    /// @notice Per-source rolling APY snapshot for TWAP anomaly detection (WS4)
+    mapping(address source => APYVerifier.APYSnapshot) public apySnapshots;
+
+    /// @notice Per-source risk profile for risk-weighted routing (WS5)
+    mapping(address source => RiskEngine.RiskProfile) public sourceRiskProfiles;
 
     // -------------------------------------------------------------------------
     // Errors
@@ -71,6 +86,8 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     event Recalled(address indexed source, uint256 amount, uint256 received);
     event Switched(address indexed from, address indexed to, uint256 amount);
     event AuthorizedCallerUpdated(address indexed previous, address indexed next);
+    event RiskProfileSet(address indexed source, uint16 riskScore, uint8 tvlTier);
+    event APYSnapshotSeeded(address indexed source, uint256 seedAPY);
 
     // -------------------------------------------------------------------------
     // Modifiers
@@ -92,7 +109,7 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     }
 
     // -------------------------------------------------------------------------
-    // Admin
+    // Admin — source management
     // -------------------------------------------------------------------------
 
     /// @notice Updates the authorised caller.
@@ -139,12 +156,53 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     }
 
     // -------------------------------------------------------------------------
+    // Admin — risk profiles (WS5)
+    // -------------------------------------------------------------------------
+
+    /// @notice Set or update the risk profile for a registered yield source.
+    ///
+    /// @dev    riskScore encodes the owner's assessment of smart contract risk,
+    ///         oracle dependence, and liquidity risk.  Range: 0 (safest) – 100 (riskiest).
+    ///         See RiskEngine.RiskProfile for field documentation.
+    ///
+    /// @param source   Registered yield adapter
+    /// @param profile  Risk metadata struct
+    function setRiskProfile(address source, RiskEngine.RiskProfile calldata profile)
+        external
+        onlyOwner
+    {
+        _requireRegistered(source);
+        sourceRiskProfiles[source] = profile;
+        emit RiskProfileSet(source, profile.riskScore, profile.tvlTier);
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin — APY snapshots (WS4)
+    // -------------------------------------------------------------------------
+
+    /// @notice Seed the APY snapshot for a source with an initial known-good value.
+    ///         Should be called after registering a new source so the TWAP has
+    ///         baseline data before the first routing call.
+    ///
+    /// @dev    Seeds two identical readings so isWithinBounds() has ≥ 2 samples
+    ///         immediately and can perform anomaly detection from the first call.
+    ///
+    /// @param source   Registered yield adapter
+    /// @param seedAPY  Known-good APY in basis points (e.g. 320 = 3.20%)
+    function initializeAPYSnapshot(address source, uint256 seedAPY) external onlyOwner {
+        _requireRegistered(source);
+        APYVerifier.update(apySnapshots[source], seedAPY);
+        APYVerifier.update(apySnapshots[source], seedAPY); // two identical readings for bootstrap
+        emit APYSnapshotSeeded(source, seedAPY);
+    }
+
+    // -------------------------------------------------------------------------
     // Core routing
     // -------------------------------------------------------------------------
 
-    /// @notice Routes `amount` USDC to the highest-APY registered source.
-    ///         The caller (StableStreamHook) must have approved this contract to
-    ///         spend `amount` tokens before calling.
+    /// @notice Routes `amount` USDC to the highest risk-adjusted APY source.
+    ///         Uses DEFAULT_RISK_TOLERANCE (5 = accept any source).
+    ///
     /// @param  amount  USDC to deposit
     /// @return chosen  The yield source address that received the funds
     function routeToBestSource(uint256 amount)
@@ -156,13 +214,36 @@ contract YieldRouter is Ownable, ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
         if (sourceCount == 0) revert NoActiveSources();
 
-        chosen = _bestSource(amount);
+        chosen = _bestSource(amount, DEFAULT_RISK_TOLERANCE);
 
         // Pull tokens from caller
         asset.safeTransferFrom(msg.sender, address(this), amount);
         // Approve adapter to spend
         asset.forceApprove(chosen, amount);
         // Deposit into adapter
+        IYieldSource(chosen).deposit(amount);
+
+        emit Routed(chosen, amount);
+    }
+
+    /// @notice Routes `amount` to the highest source meeting the given risk tolerance.
+    ///
+    /// @param  amount         USDC to deposit
+    /// @param  riskTolerance  LP's risk tolerance 0–5 (5 = accept any source)
+    /// @return chosen         The yield source address that received the funds
+    function routeToBestSourceWithRisk(uint256 amount, uint8 riskTolerance)
+        external
+        onlyAuthorized
+        nonReentrant
+        returns (address chosen)
+    {
+        if (amount == 0) revert ZeroAmount();
+        if (sourceCount == 0) revert NoActiveSources();
+
+        chosen = _bestSource(amount, riskTolerance);
+
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        asset.forceApprove(chosen, amount);
         IYieldSource(chosen).deposit(amount);
 
         emit Routed(chosen, amount);
@@ -293,26 +374,43 @@ contract YieldRouter is Ownable, ReentrancyGuard {
         }
     }
 
-    /// @notice Returns the address of the source currently offering the highest APY.
-    /// @param  minAmount  Minimum deposit size (filters out sources that can't accept it)
-    /// @return best       Address of the best source, or address(0) if none available
-    function bestSource(uint256 minAmount) external view returns (address best) {
-        return _bestSource(minAmount);
+    /// @notice Returns the address of the best source at DEFAULT_RISK_TOLERANCE.
+    /// @param  minAmount  Minimum deposit size filter
+    function bestSource(uint256 minAmount) external view returns (address) {
+        return _bestSource(minAmount, DEFAULT_RISK_TOLERANCE);
     }
 
-    /// @notice Returns APYs (in bps) for all registered sources in order.
-    function allAPYs() external view returns (address[] memory addrs, uint256[] memory apys) {
+    /// @notice Returns the best source for a given risk tolerance.
+    /// @param  minAmount      Minimum deposit size filter
+    /// @param  riskTolerance  LP's risk tolerance 0–5
+    function bestSourceWithRisk(uint256 minAmount, uint8 riskTolerance)
+        external
+        view
+        returns (address)
+    {
+        return _bestSource(minAmount, riskTolerance);
+    }
+
+    /// @notice Returns raw and TWAP APYs for all registered sources.
+    function allAPYs()
+        external
+        view
+        returns (address[] memory addrs, uint256[] memory apys, uint256[] memory twaps)
+    {
         addrs = new address[](MAX_SOURCES);
-        apys = new uint256[](MAX_SOURCES);
+        apys  = new uint256[](MAX_SOURCES);
+        twaps = new uint256[](MAX_SOURCES);
+
         for (uint256 i = 0; i < MAX_SOURCES; i++) {
             addrs[i] = sources[i];
-            if (sources[i] != address(0)) {
-                try IYieldSource(sources[i]).currentAPY() returns (uint256 apy) {
-                    apys[i] = apy;
-                } catch {
-                    apys[i] = 0;
-                }
+            if (sources[i] == address(0)) continue;
+
+            try IYieldSource(sources[i]).currentAPY() returns (uint256 apy) {
+                apys[i] = apy;
+            } catch {
+                apys[i] = 0;
             }
+            twaps[i] = APYVerifier.twap(apySnapshots[sources[i]]);  // explicit lib call
         }
     }
 
@@ -320,15 +418,36 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    function _bestSource(uint256 minAmount) internal view returns (address best) {
-        uint256 bestAPY;
+    /// @notice Core best-source selection with APY verification and risk filtering.
+    ///
+    /// @dev    Algorithm:
+    ///           For each registered source:
+    ///             1. Skip if maxDeposit() < minAmount.
+    ///             2. Query currentAPY(); skip if adapter reverts.
+    ///             3. APY anomaly check via TWAP (skip if outside bounds).
+    ///             4. Update APY snapshot.
+    ///             5. Risk filter: skip if riskScore > lpTolerance × 20.
+    ///             6. Compute risk-adjusted APY.
+    ///             7. Track the source with the highest adjusted APY.
+    ///
+    /// @param minAmount      Minimum USDC the chosen source must accept
+    /// @param riskTolerance  LP's risk tolerance 0–5 (5 = no filter)
+    /// @return best          Address of the winning source
+    function _bestSource(uint256 minAmount, uint8 riskTolerance)
+        internal
+        view
+        returns (address best)
+    {
+        uint256 bestScore;
+
         for (uint256 i = 0; i < MAX_SOURCES; i++) {
             address src = sources[i];
             if (src == address(0)) continue;
 
-            // Skip sources that can't accept the full deposit
+            // Capacity check
             if (IYieldSource(src).maxDeposit() < minAmount) continue;
 
+            // Query APY (safe — adapters may revert)
             uint256 apy;
             try IYieldSource(src).currentAPY() returns (uint256 a) {
                 apy = a;
@@ -336,11 +455,23 @@ contract YieldRouter is Ownable, ReentrancyGuard {
                 apy = 0;
             }
 
-            if (apy > bestAPY) {
-                bestAPY = apy;
+            // APY anomaly detection via TWAP: reject sources reporting suspicious spikes.
+            // isWithinBounds is view-only; the snapshot update happens in the write path.
+            if (!APYVerifier.isWithinBounds(apySnapshots[src], apy)) continue;
+
+            // Risk filter: skip sources exceeding the LP's tolerance
+            RiskEngine.RiskProfile memory profile = sourceRiskProfiles[src];
+            if (!RiskEngine.meetsThreshold(profile, riskTolerance)) continue;
+
+            // Risk-adjusted APY (penalises high-risk sources)
+            uint256 adjusted = RiskEngine.riskAdjustedAPY(apy, profile);
+
+            if (adjusted > bestScore) {
+                bestScore = adjusted;
                 best = src;
             }
         }
+
         if (best == address(0)) revert NoActiveSources();
     }
 

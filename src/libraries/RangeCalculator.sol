@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+
 /// @title RangeCalculator
 /// @notice Pure utility functions for tick-range status checks used by StableStreamHook.
 /// @dev    All functions are pure so they can be called without storage access costs.
@@ -77,10 +79,13 @@ library RangeCalculator {
         if (sqrtPriceLimitX96 == 0) {
             return zeroForOne ? type(int24).min : type(int24).max;
         }
-        // When a limit is set we use the current tick shifted by 1 in the
-        // direction of travel.  This is deliberately conservative so we never
-        // miss a JIT recall.
-        return zeroForOne ? currentTick - 1 : currentTick + 1;
+        // Convert the actual price limit to the corresponding tick so we can
+        // determine whether the swap crosses into the position's range.
+        // This is more accurate than a ±1 heuristic and handles cases where
+        // sqrtPriceLimitX96 is near the protocol extremes (e.g. MIN_SQRT_PRICE + 1).
+        // Unused currentTick param is intentional — signature kept for backwards compat.
+        (currentTick); // silence unused-param warning
+        return TickMath.getTickAtSqrtPrice(sqrtPriceLimitX96);
     }
 
     /// @notice Returns true when a swap starting at `currentTick` with the

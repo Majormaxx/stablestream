@@ -74,6 +74,11 @@ contract CompoundV3Adapter is IYieldSource, Ownable {
     /// @notice Single address authorised to call deposit / withdraw
     address public authorizedCaller;
 
+    /// @notice Override APY in basis points (e.g. 450 = 4.50%).
+    ///         When non-zero, currentAPY() returns this value instead of
+    ///         querying Comet — useful on testnets where Comet is not deployed.
+    uint256 public mockAPY;
+
     // -------------------------------------------------------------------------
     // Errors
     // -------------------------------------------------------------------------
@@ -116,6 +121,12 @@ contract CompoundV3Adapter is IYieldSource, Ownable {
     function setAuthorizedCaller(address caller) external onlyOwner {
         emit AuthorizedCallerUpdated(authorizedCaller, caller);
         authorizedCaller = caller;
+    }
+
+    /// @notice Sets a mock APY override (basis points). Pass 0 to disable.
+    ///         Use on testnets where the real Comet is not deployed.
+    function setMockAPY(uint256 bps) external onlyOwner {
+        mockAPY = bps;
     }
 
     // -------------------------------------------------------------------------
@@ -189,6 +200,7 @@ contract CompoundV3Adapter is IYieldSource, Ownable {
     ///       actually that high, but that's the scale).
     ///       APY_bps = ratePerSec * SECONDS_PER_YEAR * BPS / RATE_SCALE
     function currentAPY() external view returns (uint256) {
+        if (mockAPY != 0) return mockAPY;
         try comet.getUtilization() returns (uint256 utilization) {
             try comet.getSupplyRate(utilization) returns (uint64 ratePerSec) {
                 return (uint256(ratePerSec) * SECONDS_PER_YEAR * BPS) / RATE_SCALE;
