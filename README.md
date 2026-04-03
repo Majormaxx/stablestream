@@ -68,6 +68,18 @@ Standard mitigations require active LP monitoring or centralised keeper bots. St
           └── CompoundV3Adapter ──► Compound V3 Comet (USDC)
 ```
 
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Smart contracts | Solidity 0.8, Uniswap v4 Hooks (`BaseHook`) |
+| Automation | Reactive Network RSC (`IReactive`, `ISubscriber`) |
+| Yield | Compound V3 Comet, Aave V3 |
+| Testing | Foundry — 181 tests across 10 suites |
+| Frontend | Next.js 14, wagmi, viem |
+| Chains | Unichain Sepolia (contracts) · Reactive Network Lasna (RSC) |
+
 ### Position Lifecycle
 
 | Step | Trigger | Actor |
