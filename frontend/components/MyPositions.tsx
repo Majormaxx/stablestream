@@ -8,8 +8,10 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { formatUnits } from "viem";
+import { formatUnits, type Abi } from "viem";
 import { CONTRACTS, StableStreamHookABI } from "@/lib/contracts";
+
+const HOOK_ABI = StableStreamHookABI as Abi;
 import { USDC_DECIMALS } from "@/lib/poolKey";
 
 /* ── Types ──────────────────────────────────────────────── */
@@ -101,7 +103,7 @@ function PositionCard({
     setErrorMsg("");
     setWithdrawing(true);
     writeWithdraw(
-      { address: CONTRACTS.HOOK, abi: StableStreamHookABI as const, functionName: "withdraw", args: [positionId] },
+      { address: CONTRACTS.HOOK, abi: HOOK_ABI, functionName: "withdraw", args: [positionId] },
       {
         onError: (e) => {
           console.error("withdraw error:", e);
@@ -241,7 +243,7 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
 
   const { data: positionIds, isLoading, isError, refetch } = useReadContract({
     address: CONTRACTS.HOOK,
-    abi: StableStreamHookABI as const,
+    abi: HOOK_ABI,
     functionName: "getOwnerPositions",
     args: address ? [address] : undefined,
     query: { enabled: !!address, refetchInterval: 20_000, refetchIntervalInBackground: false },
@@ -262,7 +264,7 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
   const { data: positionsData, isLoading: posLoading } = useReadContracts({
     contracts: pagedIds.map((id) => ({
       address: CONTRACTS.HOOK as `0x${string}`,
-      abi: StableStreamHookABI as const,
+      abi: HOOK_ABI,
       functionName: "getPosition" as const,
       args: [id] as const,
     })),
