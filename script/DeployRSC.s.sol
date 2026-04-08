@@ -23,8 +23,14 @@ contract DeployRSC is Script {
     uint256 constant DEST_CHAIN_ID = 1301;
 
     function run() external {
+        // ── Chain-ID gate ─────────────────────────────────────────────────────
+        require(block.chainid == 5318007, "DeployRSC: wrong chain - expected Reactive Network Lasna (5318007)");
+
         uint256 deployerKey = vm.envUint("REACTIVE_PRIVATE_KEY");
         address hookAddress  = vm.envAddress("STABLE_STREAM_HOOK_ADDRESS");
+
+        // ── Validate hook address ─────────────────────────────────────────────
+        require(hookAddress != address(0), "DeployRSC: STABLE_STREAM_HOOK_ADDRESS not set");
 
         address deployer = vm.addr(deployerKey);
 

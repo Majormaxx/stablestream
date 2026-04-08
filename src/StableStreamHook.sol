@@ -396,42 +396,17 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     ///
     ///       We intentionally do NOT call YieldRouter here — PoolManager's reentrancy
     ///       lock prevents external calls that loop back into the pool.
+    /// @dev  beforeSwap no longer scans yield-deployed positions with a heuristic price-limit
+    ///       estimate (Finding 9830b75d): a swapper-controlled sqrtPriceLimitX96 allowed false
+    ///       PositionEnteredRange emissions that griefed JIT recalls. Range-entry detection
+    ///       has been moved to afterSwap where the actual post-swap tick is available.
     function beforeSwap(
         address,
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        IPoolManager.SwapParams calldata,
         bytes calldata
     ) external onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24) {
         PoolId pid = key.toId();
-        (, int24 currentTick,,) = poolManager.getSlot0(pid);
-
-        bytes32[] storage poolIds = _poolPositionIds[pid];
-        uint256 len = poolIds.length;
-
-        for (uint256 i = 0; i < len; ) {
-            bytes32 posId = poolIds[i];
-            TrackedPosition storage pos = positions[posId];
-
-            if (!pos.closed && pos.yieldDeposited > 0) {
-                // Check transient storage: if already flagged this tx, skip re-emission
-                bytes32 slot = TransientStorage.slotFor(PENDING_RECALL_PREFIX, posId);
-                if (!TransientStorage.tload(slot)) {
-                    bool couldEnter = RangeCalculator.swapCouldEnterRange(
-                        currentTick,
-                        params.zeroForOne,
-                        params.sqrtPriceLimitX96,
-                        pos.tickLower,
-                        pos.tickUpper
-                    );
-                    if (couldEnter) {
-                        TransientStorage.tstore(slot, true);
-                        emit PositionEnteredRange(posId, currentTick);
-                    }
-                }
-            }
-
-            unchecked { ++i; }
-        }
 
         // Dynamic fee: only returned for pools initialised with DYNAMIC_FEE_FLAG.
         // For static-fee pools this value is ignored by the PoolManager.
@@ -447,9 +422,12 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc IHooks
-    /// @dev  Post-swap scan: detects which in-pool positions just left their range
-    ///       and emits PositionLeftRange for the RSC to act on.
-    ///       Also stores the new tick as prevTick for the next swap's beforeSwap.
+    /// @dev  Post-swap scan using actual pre- and post-swap ticks (no heuristics):
+    ///       - Detects in-pool positions that just left their range → PositionLeftRange
+    ///       - Detects yield-deployed positions that just entered their range →
+    ///         PositionEnteredRange (moved here from beforeSwap to eliminate false positives
+    ///         from swapper-controlled sqrtPriceLimitX96, Finding 9830b75d)
+    ///       Also stores the new tick as prevTick for the next swap's afterSwap.
     function afterSwap(
         address,
         PoolKey calldata key,
@@ -469,9 +447,21 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
             bytes32 posId = poolIds[i];
             TrackedPosition storage pos = positions[posId];
 
-            if (!pos.closed && pos.liquidity > 0) {
-                if (RangeCalculator.crossedOutOfRange(prevTick, newTick, pos.tickLower, pos.tickUpper)) {
-                    emit PositionLeftRange(posId, newTick);
+            if (!pos.closed) {
+                if (pos.liquidity > 0) {
+                    if (RangeCalculator.crossedOutOfRange(prevTick, newTick, pos.tickLower, pos.tickUpper)) {
+                        emit PositionLeftRange(posId, newTick);
+                    }
+                } else if (pos.yieldDeposited > 0) {
+                    // Emit PositionEnteredRange only when the price actually crossed into range.
+                    // Transient storage deduplicates within the same transaction.
+                    bytes32 slot = TransientStorage.slotFor(PENDING_RECALL_PREFIX, posId);
+                    if (!TransientStorage.tload(slot)) {
+                        if (RangeCalculator.crossedIntoRange(prevTick, newTick, pos.tickLower, pos.tickUpper)) {
+                            TransientStorage.tstore(slot, true);
+                            emit PositionEnteredRange(posId, newTick);
+                        }
+                    }
                 }
             }
 
@@ -589,13 +579,32 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
 
         // Remove in-pool liquidity
         if (pos.liquidity > 0) {
+            Currency currency0 = pos.key.currency0;
+            uint256 token0Before = currency0.isAddressZero()
+                ? address(this).balance
+                : IERC20(Currency.unwrap(currency0)).balanceOf(address(this));
+
             poolManager.unlock(abi.encode(Action.WITHDRAW, positionId));
+
+            uint256 token0Received = (currency0.isAddressZero()
+                ? address(this).balance
+                : IERC20(Currency.unwrap(currency0)).balanceOf(address(this))) - token0Before;
+
+            if (token0Received > 0) {
+                if (currency0.isAddressZero()) {
+                    (bool ok,) = payable(msg.sender).call{value: token0Received}("");
+                    require(ok, "SSHook: ETH transfer failed");
+                } else {
+                    IERC20(Currency.unwrap(currency0)).safeTransfer(msg.sender, token0Received);
+                }
+            }
         }
 
         returned = usdc.balanceOf(address(this)) - beforeBal;
         uint256 yieldEarned = uint256(pos.yieldState.harvestedYield);
 
         pos.closed = true;
+        _removeFromPoolPositionIds(pos.poolId, positionId);
         pos.liquidity = 0;
         // Clear pending recall flag from transient storage
         TransientStorage.tstore(
@@ -655,11 +664,39 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         }
 
         // Remove liquidity from the pool (inside unlock callback)
+        Currency currency0 = pos.key.currency0;
+        uint256 token0Before = currency0.isAddressZero()
+            ? address(this).balance
+            : IERC20(Currency.unwrap(currency0)).balanceOf(address(this));
         uint256 beforeBal = usdc.balanceOf(address(this));
-        poolManager.unlock(abi.encode(Action.ROUTE_TO_YIELD, positionId));
-        uint256 recovered = usdc.balanceOf(address(this)) - beforeBal;
 
-        if (recovered == 0) return;
+        poolManager.unlock(abi.encode(Action.ROUTE_TO_YIELD, positionId));
+
+        uint256 recovered = usdc.balanceOf(address(this)) - beforeBal;
+        uint256 token0Received = (currency0.isAddressZero()
+            ? address(this).balance
+            : IERC20(Currency.unwrap(currency0)).balanceOf(address(this))) - token0Before;
+
+        // Transfer any token0 returned by liquidity removal to the position owner
+        if (token0Received > 0) {
+            if (currency0.isAddressZero()) {
+                (bool ok,) = payable(pos.owner).call{value: token0Received}("");
+                require(ok, "SSHook: ETH transfer failed");
+            } else {
+                IERC20(Currency.unwrap(currency0)).safeTransfer(pos.owner, token0Received);
+            }
+        }
+
+        if (recovered == 0) {
+            // Liquidity removed but no USDC recovered (price below tickLower — all token0).
+            // pos.liquidity was zeroed in the callback; close the position cleanly instead of
+            // leaving it with liquidity=0 and yieldDeposited=0 (unrecoverable state).
+            pos.closed = true;
+            _removeFromPoolPositionIds(pos.poolId, positionId);
+            if (address(nft) != address(0)) nft.burn(positionId);
+            emit PositionExited(positionId, pos.owner, 0, 0);
+            return;
+        }
 
         // Route USDC to best yield source via router
         usdc.forceApprove(address(yieldRouter), recovered);
@@ -869,24 +906,43 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
         pos.liquidity = 0;
     }
 
-    /// @dev Re-adds recalled capital as concentrated liquidity.
+    /// @dev Re-adds recalled USDC capital as concentrated liquidity.
+    ///      Mirrors _handleDeposit: converts the USDC token amount to proper liquidity
+    ///      units using LiquidityAmounts, because liquidityDelta is NOT denominated in
+    ///      token units (Finding 6a3185ad: raw `recalled` was used directly, causing
+    ///      modifyLiquidity to revert with an invalid delta).
     function _handleRecallFromYield(bytes calldata data) internal returns (bytes memory) {
         (, bytes32 positionId, uint256 recalled) = abi.decode(data, (Action, bytes32, uint256));
         TrackedPosition storage pos = positions[positionId];
 
-        int256 liquidityDelta = int256(recalled);
+        // Compute correct liquidity units from the recalled USDC amount (same logic as _handleDeposit).
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, pos.key.toId());
+        uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(pos.tickLower);
+        uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(pos.tickUpper);
+
+        uint128 liq;
+        if (sqrtPriceX96 >= sqrtRatioBX96) {
+            // Price at or above tickUpper — range is entirely token1 (USDC).
+            liq = LiquidityAmounts.getLiquidityForAmount1(sqrtRatioAX96, sqrtRatioBX96, recalled);
+        } else if (sqrtPriceX96 > sqrtRatioAX96) {
+            // Price inside the range — USDC covers [tickLower, currentPrice].
+            liq = LiquidityAmounts.getLiquidityForAmount1(sqrtRatioAX96, sqrtPriceX96, recalled);
+        } else {
+            // Price at or below tickLower — range is entirely token0; cannot add USDC liquidity.
+            revert("SSHook: price below range on recall, withdraw instead");
+        }
 
         IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
             tickLower: pos.tickLower,
             tickUpper: pos.tickUpper,
-            liquidityDelta: liquidityDelta,
+            liquidityDelta: int256(uint256(liq)),
             salt: bytes32(0)
         });
 
         (BalanceDelta delta,) = poolManager.modifyLiquidity(pos.key, params, abi.encode(true));
         _settleDeltas(pos.key, delta);
 
-        return abi.encode(uint128(uint256(liquidityDelta)));
+        return abi.encode(liq);
     }
 
     // -------------------------------------------------------------------------
@@ -962,6 +1018,21 @@ contract StableStreamHook is IHooks, SafeCallback, Ownable, ReentrancyGuard {
             poolYieldCapital[pid] = poolYieldCapital[pid] > yieldDelta
                 ? poolYieldCapital[pid] - yieldDelta
                 : 0;
+        }
+    }
+
+    /// @dev Removes `positionId` from `_poolPositionIds[pid]` using swap-and-pop (O(n) scan).
+    ///      Called when a position is permanently closed so swap callbacks no longer iterate it.
+    function _removeFromPoolPositionIds(PoolId pid, bytes32 positionId) internal {
+        bytes32[] storage arr = _poolPositionIds[pid];
+        uint256 len = arr.length;
+        for (uint256 i = 0; i < len; ) {
+            if (arr[i] == positionId) {
+                arr[i] = arr[len - 1];
+                arr.pop();
+                break;
+            }
+            unchecked { ++i; }
         }
     }
 

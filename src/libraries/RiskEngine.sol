@@ -66,8 +66,11 @@ library RiskEngine {
         pure
         returns (uint256)
     {
-        // riskScore is 0..100; safety multiplier is 0..100
-        uint256 safetyMultiplier = 100 - uint256(profile.riskScore);
+        // Clamp riskScore to 100 so an out-of-range value never causes an underflow
+        // revert. A clamped score of 100 yields safetyMultiplier=0 (adjustedAPY=0),
+        // causing the router to skip the misconfigured source instead of reverting.
+        uint256 score = profile.riskScore > 100 ? 100 : uint256(profile.riskScore);
+        uint256 safetyMultiplier = 100 - score;
         return (rawAPY * safetyMultiplier) / 100;
     }
 
@@ -81,8 +84,11 @@ library RiskEngine {
         pure
         returns (bool)
     {
-        // lpTolerance 5 → maxRisk 100, which accepts every valid riskScore (0..100)
-        uint16 maxRisk = uint16(lpTolerance) * 20;
+        // Clamp lpTolerance to its documented 0–5 range (Finding d24db16a).
+        // Values > 5 would produce maxRisk > 100, silently disabling the filter.
+        uint8 tolerance = lpTolerance > 5 ? 5 : lpTolerance;
+        // tolerance 5 → maxRisk 100, which accepts every valid riskScore (0..100)
+        uint16 maxRisk = uint16(tolerance) * 20;
         return profile.riskScore <= maxRisk;
     }
 

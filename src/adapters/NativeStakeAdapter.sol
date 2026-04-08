@@ -31,8 +31,9 @@ interface IUnichainStaking {
 ///      The adapter operates in USDC (6 dec); this bridge handles USDC ↔ ETH.
 interface ISwapHelper {
     /// @notice Swap `amountIn` USDC for ETH, sending ETH to this contract.
+    /// @param  minEthOut   Minimum ETH (18 dec) to receive; revert if not met.
     /// @return ethReceived Amount of ETH (18 dec) received
-    function swapUSDCForETH(uint256 amountIn) external returns (uint256 ethReceived);
+    function swapUSDCForETH(uint256 amountIn, uint256 minEthOut) external returns (uint256 ethReceived);
 
     /// @notice Swap `ethIn` ETH for USDC, sending USDC to `recipient`.
     /// @return usdcReceived Amount of USDC (6 dec) received
@@ -98,6 +99,11 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
     /// @notice Maximum USDC that can be deployed via this adapter at once
     uint256 public maxCapacity;
 
+    /// @notice Admin-set ETH price floor used to compute slippage on USDC→ETH swaps.
+    ///         Expressed as USDC per 1 ETH (6-decimal, e.g. 1800e6 = $1,800/ETH floor).
+    ///         Must be set before any deposit; reverts with EthFloorPriceNotSet if zero.
+    uint256 public ethUsdFloorPrice;
+
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
@@ -106,6 +112,7 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
     event StakeWithdrawn(uint256 sharesRedeemed, uint256 ethRecovered, uint256 usdcOut);
     event MaxCapacityUpdated(uint256 newCapacity);
     event AuthorizedCallerUpdated(address indexed newCaller);
+    event EthUsdFloorPriceUpdated(uint256 newPrice);
 
     // -------------------------------------------------------------------------
     // Errors (supplement the ones inherited from IYieldSource)
@@ -113,6 +120,7 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
 
     error Unauthorized();
     error SlippageExceeded(uint256 expectedMin, uint256 actual);
+    error EthFloorPriceNotSet();
 
     // -------------------------------------------------------------------------
     // Constructor
@@ -153,13 +161,20 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
     function deposit(uint256 amount) external override onlyAuthorized returns (uint256 sharesReceived) {
         if (amount == 0) revert ZeroAmount();
 
-        uint256 available = maxCapacity - totalDeposited;
+        uint256 available = totalDeposited >= maxCapacity ? 0 : maxCapacity - totalDeposited;
         if (amount > available) revert ExceedsCapacity(amount, available);
 
         USDC.safeTransferFrom(msg.sender, address(this), amount);
         USDC.forceApprove(address(SWAP_HELPER), amount);
 
-        uint256 ethReceived = SWAP_HELPER.swapUSDCForETH(amount);
+        if (ethUsdFloorPrice == 0) revert EthFloorPriceNotSet();
+        uint256 minEthOut = (amount * 1e18 * (10_000 - MAX_SLIPPAGE_BPS)) / (ethUsdFloorPrice * 10_000);
+
+        uint256 ethReceived = SWAP_HELPER.swapUSDCForETH(amount, minEthOut);
+        // Revoke any unspent allowance so a later compromise of SWAP_HELPER cannot
+        // drain USDC held by this contract using a lingering approval (Finding 1edf01b3).
+        USDC.forceApprove(address(SWAP_HELPER), 0);
+        if (ethReceived < minEthOut) revert SlippageExceeded(minEthOut, ethReceived);
 
         uint256 sharesBefore = STAKING.balanceOf(address(this));
         STAKING.deposit{value: ethReceived}();
@@ -214,7 +229,12 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
 
         if (ethRecovered == 0) return 0;
 
+        // Slippage guard: expect at least totalDeposited * (1 - slippage) USDC back
+        uint256 minUSDC = (totalDeposited * (10_000 - MAX_SLIPPAGE_BPS)) / 10_000;
+
         usdcReceived = SWAP_HELPER.swapETHForUSDC{value: ethRecovered}(ethRecovered, msg.sender);
+        if (usdcReceived < minUSDC) revert SlippageExceeded(minUSDC, usdcReceived);
+
         totalDeposited = 0;
 
         emit StakeWithdrawn(totalShares, ethRecovered, usdcReceived);
@@ -225,20 +245,19 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
     // -------------------------------------------------------------------------
 
     /// @inheritdoc IYieldSource
-    /// @dev  Returns the USDC-denominated value of `account`'s position in this adapter.
+    /// @dev  Returns the USDC-denominated principal currently deployed through this adapter.
     ///       Since the adapter holds all stake on behalf of the YieldRouter, only
     ///       the YieldRouter's balance is meaningful.  For other addresses, returns 0.
-    ///       Yield is estimated proportionally from the ETH staking gain above principal.
+    ///
+    ///       NOTE: Returns `totalDeposited` (6-decimal USDC) rather than attempting
+    ///       to convert `shareToAsset` (18-decimal ETH) to USDC.  Without a live
+    ///       ETH/USD oracle the conversion produces a ~1e12 unit mismatch that inflates
+    ///       the reported balance and corrupts router accounting (Finding 34ba2dbc).
+    ///       Accrued ETH yield is still realized in full when the position is unwound
+    ///       via withdraw() or withdrawAll().
     function balanceOf(address account) external view override returns (uint256) {
         if (account != authorizedCaller && account != owner()) return 0;
-
-        uint256 shares = STAKING.balanceOf(address(this));
-        if (shares == 0) return 0;
-
-        uint256 ethValue = STAKING.shareToAsset(shares);
-        // Return deposited principal + estimated yield (eth gain expressed in USDC terms)
-        // In production: use Chainlink ETH/USD oracle for accurate conversion
-        return totalDeposited + (ethValue > totalDeposited ? ethValue - totalDeposited : 0);
+        return totalDeposited;
     }
 
     /// @inheritdoc IYieldSource
@@ -255,6 +274,7 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
     /// @inheritdoc IYieldSource
     /// @dev  Returns remaining capacity as the maximum additional deposit.
     function maxDeposit() public view override returns (uint256) {
+        if (totalDeposited >= maxCapacity) return 0;
         return maxCapacity - totalDeposited;
     }
 
@@ -270,6 +290,13 @@ contract NativeStakeAdapter is IYieldSource, Ownable {
     function setMaxCapacity(uint256 newCapacity) external onlyOwner {
         maxCapacity = newCapacity;
         emit MaxCapacityUpdated(newCapacity);
+    }
+
+    /// @notice Set the ETH/USD floor price used to compute deposit slippage.
+    /// @param  priceUsdcPerEth  USDC value of 1 ETH (6-decimal, e.g. 1800e6 for $1,800/ETH).
+    function setEthUsdFloorPrice(uint256 priceUsdcPerEth) external onlyOwner {
+        ethUsdFloorPrice = priceUsdcPerEth;
+        emit EthUsdFloorPriceUpdated(priceUsdcPerEth);
     }
 
     // -------------------------------------------------------------------------

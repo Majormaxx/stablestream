@@ -37,13 +37,21 @@ contract MockYieldSource is IYieldSource {
     function setAuthorizedCaller(address c) external { authorizedCaller = c; }
     function setAPY(uint256 bps) external { simulatedAPYBps = bps; }
 
-    function deposit(uint256 amount) external override returns (uint256) {
+    modifier onlyAuthorized() {
+        require(
+            authorizedCaller == address(0) || msg.sender == authorizedCaller,
+            "MockYieldSource: unauthorized"
+        );
+        _;
+    }
+
+    function deposit(uint256 amount) external override onlyAuthorized returns (uint256) {
         token.transferFrom(msg.sender, address(this), amount);
         totalDeposited += amount;
         return amount;
     }
 
-    function withdraw(uint256 amount) external override returns (uint256) {
+    function withdraw(uint256 amount) external override onlyAuthorized returns (uint256) {
         uint256 toSend = amount > totalDeposited ? totalDeposited : amount;
         uint256 yieldBonus = (toSend * 10) / 10_000; // 0.1% simulated yield
         uint256 total = toSend + yieldBonus;
@@ -53,7 +61,7 @@ contract MockYieldSource is IYieldSource {
         return total;
     }
 
-    function withdrawAll() external override returns (uint256) {
+    function withdrawAll() external override onlyAuthorized returns (uint256) {
         uint256 all = totalDeposited;
         if (all == 0) return 0;
         totalDeposited = 0;
@@ -74,6 +82,7 @@ contract MockYieldSource is IYieldSource {
 // Mock USDC (minimal mintable ERC-20 for tests)
 // ---------------------------------------------------------------------------
 
+// @dev Test-only contract — must never be deployed to any live network.
 contract MockUSDC {
     string public name;
     string public symbol;
@@ -83,16 +92,33 @@ contract MockUSDC {
     mapping(address => mapping(address => uint256)) public allowance;
     uint256 public totalSupply;
 
+    address public deployer;
+    bool private _initialized;
+    mapping(address => bool) public minters;
+
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
+    constructor() {
+        deployer = msg.sender;
+        minters[msg.sender] = true;
+    }
+
+    function addMinter(address minter) external {
+        require(msg.sender == deployer, "MockUSDC: only deployer");
+        minters[minter] = true;
+    }
+
     function initialize(string memory name_, string memory symbol_, uint8 decimals_) public {
+        require(!_initialized, "MockUSDC: already initialized");
+        _initialized = true;
         name = name_;
         symbol = symbol_;
         decimals = decimals_;
     }
 
     function mint(address to, uint256 amount) external {
+        require(minters[msg.sender], "MockUSDC: unauthorized minter");
         totalSupply += amount;
         balanceOf[to] += amount;
         emit Transfer(address(0), to, amount);
@@ -201,6 +227,10 @@ contract IntegrationTest is Test {
         aaveMock.setAuthorizedCaller(address(yieldRouter));
         compoundMock.setAuthorizedCaller(address(yieldRouter));
 
+        // Allow mock yield sources to mint yield bonuses into MockUSDC
+        usdc.addMinter(address(aaveMock));
+        usdc.addMinter(address(compoundMock));
+
         // Register yield sources
         yieldRouter.registerSource(address(aaveMock));
         yieldRouter.registerSource(address(compoundMock));
@@ -232,6 +262,9 @@ contract IntegrationTest is Test {
             tickSpacing: 10,
             hooks: hook
         });
+
+        // Allow the test contract to mint USDC directly in test helpers
+        usdc.addMinter(address(this));
 
         vm.stopPrank();
 
@@ -418,11 +451,12 @@ contract IntegrationTest is Test {
             "swap going further out: cannot enter"
         );
 
-        // Current tick below range, unlimited swap oneForZero (tick increases) — could enter
-        // Using sqrtPriceLimitX96 = 0 (unlimited) so estimatedTick = type(int24).max
-        assertTrue(
+        // Current tick below range, unlimited swap oneForZero (sqrtPriceLimitX96 == 0).
+        // Conservative fix (Finding 9830b75d): 0 limit is treated as no movement known,
+        // so estimatedTick == currentTick (-20) which is below tickLower (-5) → false.
+        assertFalse(
             RangeCalculator.swapCouldEnterRange(-20, false, 0, -5, 5),
-            "unlimited swap going toward range from below: could enter"
+            "unlimited swap (limit=0): conservative estimate returns false"
         );
 
         // Current tick above range, swap is zeroForOne (tick decreases) — could enter

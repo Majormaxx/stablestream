@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import {
   useAccount,
   useReadContract,
+  useReadContracts,
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
@@ -41,6 +42,8 @@ interface TrackedPosition {
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
+const PAGE_SIZE = 20;
+
 function positionStatus(pos: TrackedPosition): { label: string; color: string } {
   if (pos.closed) return { label: "Closed", color: "#FF5050" };
   if (pos.activeYieldSource !== ZERO_ADDR && pos.yieldDeposited > 0n)
@@ -67,22 +70,18 @@ function CardSkeleton() {
 /* ── Single position card ────────────────────────────────── */
 function PositionCard({
   positionId,
+  pos,
+  isLoading,
   onWithdrawn,
 }: {
   positionId: `0x${string}`;
+  pos: TrackedPosition | undefined;
+  isLoading: boolean;
   onWithdrawn: () => void;
 }) {
   const [withdrawing, setWithdrawing]   = useState(false);
   const [withdrawn, setWithdrawn]       = useState(false);
   const [errorMsg, setErrorMsg]         = useState("");
-
-  const { data: rawPos, isLoading } = useReadContract({
-    address: CONTRACTS.HOOK,
-    abi: StableStreamHookABI,
-    functionName: "getPosition",
-    args: [positionId],
-    query: { refetchInterval: 20_000 },
-  });
 
   const { writeContract: writeWithdraw, isPending: withdrawPending, data: withdrawHash } =
     useWriteContract();
@@ -98,8 +97,6 @@ function PositionCard({
     }
   }, [withdrawConfirmed, withdrawing, onWithdrawn]);
 
-  const pos = rawPos as TrackedPosition | undefined;
-
   function handleWithdraw() {
     setErrorMsg("");
     setWithdrawing(true);
@@ -107,7 +104,8 @@ function PositionCard({
       { address: CONTRACTS.HOOK, abi: StableStreamHookABI, functionName: "withdraw", args: [positionId] },
       {
         onError: (e) => {
-          setErrorMsg(e.message.split("\n")[0]);
+          console.error("withdraw error:", e);
+          setErrorMsg("Withdrawal failed. Please try again or check your wallet.");
           setWithdrawing(false);
         },
       }
@@ -239,13 +237,14 @@ function PositionCard({
 export function MyPositions({ refreshKey }: { refreshKey?: number }) {
   const { address } = useAccount();
   const [localKey, setLocalKey] = useState(0);
+  const [page, setPage] = useState(0);
 
   const { data: positionIds, isLoading, isError, refetch } = useReadContract({
     address: CONTRACTS.HOOK,
     abi: StableStreamHookABI,
     functionName: "getOwnerPositions",
     args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 20_000 },
+    query: { enabled: !!address, refetchInterval: 20_000, refetchIntervalInBackground: false },
   });
 
   /* Re-fetch when parent signals a new deposit */
@@ -256,6 +255,23 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
   function handleRefresh() { setLocalKey((k) => k + 1); refetch(); }
 
   const ids = Array.isArray(positionIds) ? (positionIds as `0x${string}`[]) : [];
+  const totalPages = Math.max(1, Math.ceil(ids.length / PAGE_SIZE));
+  const pagedIds = ids.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  /* Single multicall for all visible positions — one RPC round-trip per interval */
+  const { data: positionsData, isLoading: posLoading } = useReadContracts({
+    contracts: pagedIds.map((id) => ({
+      address: CONTRACTS.HOOK as `0x${string}`,
+      abi: StableStreamHookABI,
+      functionName: "getPosition" as const,
+      args: [id] as const,
+    })),
+    query: {
+      enabled: pagedIds.length > 0,
+      refetchInterval: 20_000,
+      refetchIntervalInBackground: false,
+    },
+  });
 
   return (
     <div style={{
@@ -302,15 +318,32 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
       )}
 
       {/* Positions */}
-      {!isLoading && ids.length > 0 && (
+      {!isLoading && pagedIds.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {ids.map((id) => (
+          {pagedIds.map((id, i) => (
             <PositionCard
               key={`${id}-${localKey}-${refreshKey ?? 0}`}
               positionId={id}
+              pos={positionsData?.[i]?.result as TrackedPosition | undefined}
+              isLoading={posLoading}
               onWithdrawn={handleRefresh}
             />
           ))}
+          {totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, paddingTop: 4 }}>
+              <button type="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
+                style={{ background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,102,255,0.25)", borderRadius: 8, padding: "6px 14px", color: "#00AAFF", fontWeight: 600, fontSize: "0.78rem", cursor: page === 0 ? "not-allowed" : "pointer" }}>
+                ← Prev
+              </button>
+              <span style={{ color: "#4A6FA5", fontSize: "0.8rem", alignSelf: "center" }}>
+                {page + 1} / {totalPages}
+              </span>
+              <button type="button" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
+                style={{ background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,102,255,0.25)", borderRadius: 8, padding: "6px 14px", color: "#00AAFF", fontWeight: 600, fontSize: "0.78rem", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer" }}>
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       )}
 

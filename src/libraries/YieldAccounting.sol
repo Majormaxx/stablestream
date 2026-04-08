@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 /// @title YieldAccounting
 /// @notice Library for tracking per-position yield accrual inside StableStreamHook.
 /// @dev    All arithmetic uses uint256 to avoid overflow; individual fields are
 ///         sized to pack efficiently into storage slots where possible.
 library YieldAccounting {
+    using SafeCast for uint256;
     // -------------------------------------------------------------------------
     // Structs
     // -------------------------------------------------------------------------
@@ -68,7 +71,7 @@ library YieldAccounting {
     /// @param state   Storage pointer to the position's YieldState
     /// @param amount  Tokens deposited
     function recordDeposit(YieldState storage state, uint256 amount) internal {
-        state.depositedPrincipal += uint128(amount);
+        state.depositedPrincipal += amount.toUint128();
         state.lastRouteTimestamp = uint64(block.timestamp);
     }
 
@@ -82,14 +85,12 @@ library YieldAccounting {
 
         if (amount >= principal) {
             // Full principal returned + some yield
-            unchecked {
-                uint256 yieldEarned = amount - principal;
-                state.harvestedYield += uint128(yieldEarned);
-            }
+            uint256 yieldEarned = amount - principal;
+            state.harvestedYield += yieldEarned.toUint128();
             state.depositedPrincipal = 0;
         } else {
             // Partial withdrawal (shouldn't happen in normal flow, but be safe)
-            state.depositedPrincipal = uint128(principal - amount);
+            state.depositedPrincipal = (principal - amount).toUint128();
         }
 
         state.lastRouteTimestamp = uint64(block.timestamp);

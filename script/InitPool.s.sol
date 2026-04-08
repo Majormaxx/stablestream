@@ -34,17 +34,25 @@ contract InitPool is Script {
     // Tick spacing for 0.05% fee tier
     int24 constant TICK_SPACING = 10;
 
-    // Initial sqrt price: 1 ETH = ~2300 USDC
-    // sqrtPriceX96 = sqrt(price) * 2^96
-    // price = USDC per ETH = 2300e6 / 1e18 (accounting for decimals)
-    // We use TickMath.getSqrtPriceAtTick(0) = 1:1 at tick 0
-    // For 2300 USDC/ETH: tick ≈ ln(2300e6/1e18) / ln(1.0001) ≈ -125000
-    // We use tick 0 (1:1) for a clean testnet demo — adjust for mainnet
-    uint160 constant INITIAL_SQRT_PRICE = 79228162514264337593543950336; // sqrtPriceX96 at tick 0 (1:1)
+    // Fallback sqrt price for testnet demos only: tick 0 (1:1).
+    // Production deployments MUST supply INITIAL_SQRT_PRICE_X96 via env var.
+    // For 2300 USDC/ETH: tick ≈ -125000; compute with TickMath.getSqrtPriceAtTick(-125000).
+    uint160 constant DEMO_SQRT_PRICE = 79228162514264337593543950336; // sqrtPriceX96 at tick 0 (1:1)
 
     function run() external {
         uint256 deployerKey  = vm.envUint("PRIVATE_KEY");
         address hookAddress  = vm.envAddress("STABLE_STREAM_HOOK_ADDRESS");
+
+        // Read initial price from env; fall back to demo default only when not set.
+        // Set INITIAL_SQRT_PRICE_X96 for any non-demo deployment to avoid initializing
+        // at a 1:1 price that would be immediately arbitraged (Finding 8658afec).
+        uint160 initialSqrtPrice;
+        try vm.envUint("INITIAL_SQRT_PRICE_X96") returns (uint256 envPrice) {
+            require(envPrice != 0 && envPrice <= type(uint160).max, "InitPool: invalid INITIAL_SQRT_PRICE_X96");
+            initialSqrtPrice = uint160(envPrice);
+        } catch {
+            initialSqrtPrice = DEMO_SQRT_PRICE;
+        }
 
         address deployer = vm.addr(deployerKey);
 
@@ -68,7 +76,8 @@ contract InitPool is Script {
 
         vm.startBroadcast(deployerKey);
 
-        IPoolManager(POOL_MANAGER).initialize(key, INITIAL_SQRT_PRICE);
+        console2.log("InitialSqrtPrice:", initialSqrtPrice);
+        IPoolManager(POOL_MANAGER).initialize(key, initialSqrtPrice);
 
         vm.stopBroadcast();
 

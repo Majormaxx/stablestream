@@ -33,6 +33,11 @@ library APYVerifier {
     /// @notice Number of samples kept in the circular buffer.
     uint8 internal constant N_SAMPLES = 8;
 
+    /// @notice Hard ceiling on any APY value stored or checked (500% = 50_000 bps).
+    ///         Any reading above this is treated as anomalous and clamped/rejected,
+    ///         preventing overflow in twap() and isWithinBounds() (Finding 53bde759).
+    uint256 internal constant MAX_APY_BPS = 50_000;
+
     // -------------------------------------------------------------------------
     // Types
     // -------------------------------------------------------------------------
@@ -56,6 +61,9 @@ library APYVerifier {
     /// @param snap    Storage reference to the source's APYSnapshot
     /// @param newAPY  Latest APY reading in basis points (100 = 1.00%)
     function update(APYSnapshot storage snap, uint256 newAPY) internal {
+        // Clamp before storing so no out-of-range value can accumulate in the buffer
+        // and later cause twap() to overflow (Finding 53bde759).
+        if (newAPY > MAX_APY_BPS) newAPY = MAX_APY_BPS;
         snap.samples[snap.head] = newAPY;
         snap.head = (snap.head + 1) % N_SAMPLES;
         if (snap.count < N_SAMPLES) snap.count++;
@@ -96,6 +104,9 @@ library APYVerifier {
         view
         returns (bool)
     {
+        // Reject immediately if newAPY is above the hard ceiling — no arithmetic needed
+        if (newAPY > MAX_APY_BPS) return false;
+
         // Not enough history — accept anything
         if (snap.count < 2) return true;
 
@@ -104,7 +115,12 @@ library APYVerifier {
         if (avg == 0) return true;
 
         uint256 deviation = newAPY > avg ? newAPY - avg : avg - newAPY;
-        // deviation as a fraction of TWAP, expressed in bps
-        return (deviation * 10_000) / avg <= MAX_DEVIATION_BPS;
+        // Rearranged to avoid overflow: deviation * 10_000 can overflow for large values.
+        // Equivalent form: deviation / avg <= MAX_DEVIATION_BPS / 10_000
+        //   → deviation * 10_000 <= avg * MAX_DEVIATION_BPS
+        //   → deviation <= (avg * MAX_DEVIATION_BPS) / 10_000
+        // avg is bounded by MAX_APY_BPS (50_000); avg * MAX_DEVIATION_BPS = 50_000 * 200 = 10_000_000
+        // which fits comfortably in uint256 with no overflow risk.
+        return deviation <= (avg * MAX_DEVIATION_BPS) / 10_000;
     }
 }

@@ -54,6 +54,7 @@ contract StableStreamNFT is ERC721 {
 
     /// @param _hook  Address of the StableStreamHook contract (immutable after deploy)
     constructor(address _hook) ERC721("StableStream Position", "ssLP") {
+        require(_hook != address(0), "StableStreamNFT: hook is zero address");
         hook = _hook;
     }
 
@@ -67,7 +68,7 @@ contract StableStreamNFT is ERC721 {
     /// @param to          LP who opened the position (initial NFT holder)
     /// @param positionId  Unique bytes32 position identifier from the hook
     function mint(address to, bytes32 positionId) external onlyHook {
-        _mint(to, uint256(positionId));
+        _safeMint(to, uint256(positionId));
     }
 
     /// @notice Burn the position receipt NFT.

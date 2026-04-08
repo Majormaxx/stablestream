@@ -59,6 +59,14 @@ contract DeployStableStream is Script {
     // -------------------------------------------------------------------------
 
     function run() external {
+        // ── Chain-ID gate ─────────────────────────────────────────────────────
+        require(block.chainid == 1301, "Deploy: wrong chain - expected Unichain Sepolia (1301)");
+
+        // ── Verify required contracts exist on this chain ─────────────────────
+        require(POOL_MANAGER.code.length > 0, "Deploy: POOL_MANAGER has no code");
+        require(USDC.code.length > 0,         "Deploy: USDC has no code");
+        require(COMPOUND_COMET.code.length > 0, "Deploy: COMPOUND_COMET has no code");
+
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
 
@@ -128,6 +136,9 @@ contract DeployStableStream is Script {
 
         // Seed APY snapshot (Compound ~2.5% on Unichain Sepolia)
         yieldRouter.initializeAPYSnapshot(address(compoundAdapter), 250);
+
+        // Authorise YieldRouter to call CompoundV3Adapter (deposit/withdraw/withdrawAll)
+        compoundAdapter.setAuthorizedCaller(address(yieldRouter));
 
         // Authorise hook to call YieldRouter
         yieldRouter.setAuthorizedCaller(address(hook));

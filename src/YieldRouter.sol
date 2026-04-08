@@ -375,17 +375,18 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     }
 
     /// @notice Returns the address of the best source at DEFAULT_RISK_TOLERANCE.
+    ///         Non-view: also records sampled APYs into the TWAP buffer.
     /// @param  minAmount  Minimum deposit size filter
-    function bestSource(uint256 minAmount) external view returns (address) {
+    function bestSource(uint256 minAmount) external returns (address) {
         return _bestSource(minAmount, DEFAULT_RISK_TOLERANCE);
     }
 
     /// @notice Returns the best source for a given risk tolerance.
+    ///         Non-view: also records sampled APYs into the TWAP buffer.
     /// @param  minAmount      Minimum deposit size filter
     /// @param  riskTolerance  LP's risk tolerance 0–5
     function bestSourceWithRisk(uint256 minAmount, uint8 riskTolerance)
         external
-        view
         returns (address)
     {
         return _bestSource(minAmount, riskTolerance);
@@ -435,7 +436,6 @@ contract YieldRouter is Ownable, ReentrancyGuard {
     /// @return best          Address of the winning source
     function _bestSource(uint256 minAmount, uint8 riskTolerance)
         internal
-        view
         returns (address best)
     {
         uint256 bestScore;
@@ -444,8 +444,14 @@ contract YieldRouter is Ownable, ReentrancyGuard {
             address src = sources[i];
             if (src == address(0)) continue;
 
-            // Capacity check
-            if (IYieldSource(src).maxDeposit() < minAmount) continue;
+            // Capacity check (try/catch: a reverting maxDeposit skips the source, not routing)
+            uint256 cap;
+            try IYieldSource(src).maxDeposit() returns (uint256 c) {
+                cap = c;
+            } catch {
+                continue;
+            }
+            if (cap < minAmount) continue;
 
             // Query APY (safe — adapters may revert)
             uint256 apy;
@@ -456,8 +462,11 @@ contract YieldRouter is Ownable, ReentrancyGuard {
             }
 
             // APY anomaly detection via TWAP: reject sources reporting suspicious spikes.
-            // isWithinBounds is view-only; the snapshot update happens in the write path.
             if (!APYVerifier.isWithinBounds(apySnapshots[src], apy)) continue;
+
+            // Record the observed APY into the rolling snapshot so the TWAP stays
+            // current (Finding 222157ab: snapshots were never updated during routing).
+            APYVerifier.update(apySnapshots[src], apy);
 
             // Risk filter: skip sources exceeding the LP's tolerance
             RiskEngine.RiskProfile memory profile = sourceRiskProfiles[src];

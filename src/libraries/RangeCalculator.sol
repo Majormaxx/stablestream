@@ -74,17 +74,14 @@ library RangeCalculator {
         bool zeroForOne,
         uint160 sqrtPriceLimitX96
     ) internal pure returns (int24 estimatedTick) {
-        // If the price limit is 0 (unlimited), return a directional bound.
-        // The real tick will be AT MOST this far in the indicated direction.
+        // If the price limit is 0 (no limit set by the swapper), treat conservatively:
+        // return the current tick so callers do NOT assume unlimited price movement.
+        // Returning type(int24).min/max here caused false-positive recall triggers on
+        // every unlimited swap (Finding 9830b75d); conservative treatment eliminates that.
         if (sqrtPriceLimitX96 == 0) {
-            return zeroForOne ? type(int24).min : type(int24).max;
+            (zeroForOne); // silence unused-param warning
+            return currentTick;
         }
-        // Convert the actual price limit to the corresponding tick so we can
-        // determine whether the swap crosses into the position's range.
-        // This is more accurate than a ±1 heuristic and handles cases where
-        // sqrtPriceLimitX96 is near the protocol extremes (e.g. MIN_SQRT_PRICE + 1).
-        // Unused currentTick param is intentional — signature kept for backwards compat.
-        (currentTick); // silence unused-param warning
         return TickMath.getTickAtSqrtPrice(sqrtPriceLimitX96);
     }
 

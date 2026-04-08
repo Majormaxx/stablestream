@@ -275,11 +275,13 @@ contract RangeMonitorRSC is IReactive, AbstractPausableReactive {
 
     /// @notice Transfer RSC ownership to a new address.
     function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "RangeMonitorRSC: new owner is zero address");
         owner = newOwner;
     }
 
     /// @notice Withdraw any ETH balance (e.g. leftover from payable constructor).
     function withdrawEth() external onlyOwner {
-        payable(owner).transfer(address(this).balance);
+        (bool ok,) = payable(owner).call{value: address(this).balance}("");
+        require(ok, "RangeMonitorRSC: ETH transfer failed");
     }
 }

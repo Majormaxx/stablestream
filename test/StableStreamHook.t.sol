@@ -313,7 +313,7 @@ contract StableStreamHookTest is Test {
         assertEq(yieldRouter.sourceCount(), 2);
     }
 
-    function test_yieldRouter_bestSource_pickHighestAPY() public view {
+    function test_yieldRouter_bestSource_pickHighestAPY() public {
         // Aave at 320 bps > Compound at 280 bps
         address best = yieldRouter.bestSource(1e6);
         assertEq(best, address(aaveMock));

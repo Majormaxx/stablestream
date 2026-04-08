@@ -141,15 +141,17 @@ contract SecurityEdgeCasesTest is Test {
         assertEq(APYVerifier.twap(snap), 400, "TWAP after full wrap must equal last 8 samples");
     }
 
-    /// @notice Large APY values don't cause overflow in the TWAP sum.
+    /// @notice Large APY values are clamped to MAX_APY_BPS before storage (Finding 53bde759).
+    ///         update() must not revert and twap() must return the clamped value.
     function test_sec_apyVerifier_largeValuesNoOverflow() public {
         APYVerifier.APYSnapshot storage snap = _snaps["large"];
-        // 8 samples of ~type(uint256).max / 8 should not overflow when summed
+        // Values above MAX_APY_BPS (50_000) are clamped before being stored,
+        // so neither update() nor twap() can overflow.
         uint256 bigVal = type(uint256).max / 8;
         for (uint256 i = 0; i < 8; i++) APYVerifier.update(snap, bigVal);
-        // Should not revert
+        // Should not revert; TWAP must equal the clamped ceiling, not bigVal
         uint256 avg = APYVerifier.twap(snap);
-        assertEq(avg, bigVal, "TWAP of identical large values must equal those values");
+        assertEq(avg, 50_000, "Large values must be clamped to MAX_APY_BPS (50_000 bps)");
     }
 
     // =========================================================================
