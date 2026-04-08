@@ -101,7 +101,7 @@ function PositionCard({
     setErrorMsg("");
     setWithdrawing(true);
     writeWithdraw(
-      { address: CONTRACTS.HOOK, abi: StableStreamHookABI, functionName: "withdraw", args: [positionId] },
+      { address: CONTRACTS.HOOK, abi: StableStreamHookABI as const, functionName: "withdraw", args: [positionId] },
       {
         onError: (e) => {
           console.error("withdraw error:", e);
@@ -241,7 +241,7 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
 
   const { data: positionIds, isLoading, isError, refetch } = useReadContract({
     address: CONTRACTS.HOOK,
-    abi: StableStreamHookABI,
+    abi: StableStreamHookABI as const,
     functionName: "getOwnerPositions",
     args: address ? [address] : undefined,
     query: { enabled: !!address, refetchInterval: 20_000, refetchIntervalInBackground: false },
@@ -262,7 +262,7 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
   const { data: positionsData, isLoading: posLoading } = useReadContracts({
     contracts: pagedIds.map((id) => ({
       address: CONTRACTS.HOOK as `0x${string}`,
-      abi: StableStreamHookABI,
+      abi: StableStreamHookABI as const,
       functionName: "getPosition" as const,
       args: [id] as const,
     })),
