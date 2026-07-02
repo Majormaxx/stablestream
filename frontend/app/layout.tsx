@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "StableStream: Yield Without Limits",
     description:
-      "Autonomous yield routing for Uniswap v4 concentrated liquidity. Built for the Uniswap v4 Hookathon on Unichain Sepolia.",
+      "Autonomous yield routing for Uniswap v4 concentrated liquidity on Unichain Sepolia.",
     url: BASE_URL,
     siteName: "StableStream",
     images: [
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
     creator: "@StableStream",
     title: "StableStream: Yield Without Limits",
     description:
-      "Autonomous yield routing for Uniswap v4 concentrated liquidity. Built for the Uniswap v4 Hookathon.",
+      "Autonomous yield routing for Uniswap v4 concentrated liquidity on Unichain Sepolia.",
     images: [
       {
         url: "/logo-wordmark.png",

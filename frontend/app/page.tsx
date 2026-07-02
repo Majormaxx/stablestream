@@ -318,14 +318,42 @@ export default function Home() {
       </Suspense>
 
       {/* ── Footer ───────────────────────────────────────── */}
-      <footer style={{ borderTop: "1px solid rgba(0,102,255,0.12)", padding: "40px 24px" }} className="text-center">
+      <footer style={{ borderTop: "1px solid rgba(0,102,255,0.12)", padding: "40px 24px 32px" }} className="text-center">
         <div className="flex items-center justify-center gap-3 mb-4">
           <Image src="/logo.svg" alt="StableStream" width={28} height={28}/>
           <span style={{ fontWeight: 700, color: "#F0F4FF" }}>Stable<span style={{ color: "#00AAFF" }}>Stream</span></span>
         </div>
         <p style={{ color: "#4A6FA5", fontSize: "0.8rem", letterSpacing: "0.5px" }}>
-          Built for the Uniswap v4 Hookathon · Deployed on Unichain Sepolia · Powered by Reactive Network
+          Deployed on Unichain Sepolia · Powered by Reactive Network
         </p>
+        <div style={{ marginTop: 20 }}>
+          <a
+            href="https://x.com/HQstablestream"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 20px",
+              borderRadius: 8,
+              background: "linear-gradient(135deg, rgba(0,102,255,0.12), rgba(0,170,255,0.08))",
+              border: "1px solid rgba(0,102,255,0.2)",
+              color: "#00AAFF",
+              fontSize: "0.85rem",
+              fontWeight: 500,
+              textDecoration: "none",
+              transition: "all 0.15s",
+            }}
+            onMouseOver={e => { e.currentTarget.style.background = "linear-gradient(135deg, rgba(0,102,255,0.2), rgba(0,170,255,0.12))"; e.currentTarget.style.borderColor = "rgba(0,102,255,0.4)" }}
+            onMouseOut={e => { e.currentTarget.style.background = "linear-gradient(135deg, rgba(0,102,255,0.12), rgba(0,170,255,0.08))"; e.currentTarget.style.borderColor = "rgba(0,102,255,0.2)" }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" fill="#00AAFF"/>
+            </svg>
+            @HQstablestream
+          </a>
+        </div>
       </footer>
 
     </div>
