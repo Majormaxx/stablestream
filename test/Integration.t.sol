@@ -13,11 +13,11 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 
-import {StableStreamHook} from "../src/StableStreamHook.sol";
-import {YieldRouter} from "../src/YieldRouter.sol";
-import {IYieldSource} from "../src/interfaces/IYieldSource.sol";
-import {YieldAccounting} from "../src/libraries/YieldAccounting.sol";
-import {RangeCalculator} from "../src/libraries/RangeCalculator.sol";
+import {StableStreamHook} from "../app/StableStreamHook.sol";
+import {YieldRouter} from "../src/core/YieldRouter.sol";
+import {IYieldSource} from "../src/core/interfaces/IYieldSource.sol";
+import {YieldAccounting} from "../src/core/libraries/YieldAccounting.sol";
+import {RangeCalculator} from "../src/core/libraries/RangeCalculator.sol";
 
 // ---------------------------------------------------------------------------
 // Mock yield source for integration tests.

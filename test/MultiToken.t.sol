@@ -6,8 +6,8 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
-import {StableStreamHook} from "../src/StableStreamHook.sol";
-import {YieldRouter} from "../src/YieldRouter.sol";
+import {StableStreamHook} from "../app/StableStreamHook.sol";
+import {YieldRouter} from "../src/core/YieldRouter.sol";
 
 /// @notice Minimal mintable ERC-20 for multi-token tests
 contract MockToken {

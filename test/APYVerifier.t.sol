@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {APYVerifier} from "../src/libraries/APYVerifier.sol";
+import {APYVerifier} from "../src/core/libraries/APYVerifier.sol";
 
 /// @title APYVerifierTest
 /// @notice Unit tests for the APYVerifier TWAP anomaly-detection library.

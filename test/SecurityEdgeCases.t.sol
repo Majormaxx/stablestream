@@ -6,14 +6,14 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
-import {APYVerifier}       from "../src/libraries/APYVerifier.sol";
-import {RiskEngine}        from "../src/libraries/RiskEngine.sol";
-import {TransientStorage}  from "../src/libraries/TransientStorage.sol";
-import {DynamicFeeModule}  from "../src/DynamicFeeModule.sol";
-import {StableStreamNFT}   from "../src/StableStreamNFT.sol";
-import {StableStreamHook}  from "../src/StableStreamHook.sol";
-import {YieldRouter}       from "../src/YieldRouter.sol";
-import {IYieldSource}      from "../src/interfaces/IYieldSource.sol";
+import {APYVerifier}       from "../src/core/libraries/APYVerifier.sol";
+import {RiskEngine}        from "../src/core/libraries/RiskEngine.sol";
+import {TransientStorage}  from "../src/core/libraries/TransientStorage.sol";
+import {DynamicFeeModule}  from "../src/core/libraries/DynamicFeeModule.sol";
+import {StableStreamNFT}   from "../app/StableStreamNFT.sol";
+import {StableStreamHook}  from "../app/StableStreamHook.sol";
+import {YieldRouter}       from "../src/core/YieldRouter.sol";
+import {IYieldSource}      from "../src/core/interfaces/IYieldSource.sol";
 
 /// @notice Minimal ERC-20 for security tests
 contract MiniERC20 {

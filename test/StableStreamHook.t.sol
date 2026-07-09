@@ -11,10 +11,10 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
-import {StableStreamHook} from "../src/StableStreamHook.sol";
-import {YieldRouter} from "../src/YieldRouter.sol";
-import {RangeCalculator} from "../src/libraries/RangeCalculator.sol";
-import {YieldAccounting} from "../src/libraries/YieldAccounting.sol";
+import {StableStreamHook} from "../app/StableStreamHook.sol";
+import {YieldRouter} from "../src/core/YieldRouter.sol";
+import {RangeCalculator} from "../src/core/libraries/RangeCalculator.sol";
+import {YieldAccounting} from "../src/core/libraries/YieldAccounting.sol";
 
 
 /// @notice Minimal ERC-20 mock for USDC in tests

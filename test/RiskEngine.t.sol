@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {RiskEngine} from "../src/libraries/RiskEngine.sol";
+import {RiskEngine} from "../src/core/libraries/RiskEngine.sol";
 
 /// @title RiskEngineTest
 /// @notice Unit tests for the RiskEngine risk-scoring library.

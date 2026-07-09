@@ -5,10 +5,10 @@ import {Script, console2} from "forge-std/Script.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 
-import {StableStreamHook} from "../src/StableStreamHook.sol";
-import {StableStreamNFT} from "../src/StableStreamNFT.sol";
-import {YieldRouter} from "../src/YieldRouter.sol";
-import {CompoundV3Adapter} from "../src/adapters/CompoundV3Adapter.sol";
+import {StableStreamHook} from "../StableStreamHook.sol";
+import {StableStreamNFT} from "../StableStreamNFT.sol";
+import {YieldRouter} from "../../src/core/YieldRouter.sol";
+import {CompoundV3Adapter} from "../../src/core/adapters/CompoundV3Adapter.sol";
 
 /// @title DeployStableStream
 /// @notice Deploys the full StableStream protocol to Unichain Sepolia (chain ID 1301).

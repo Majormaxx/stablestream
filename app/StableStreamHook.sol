@@ -27,12 +27,12 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 // StableStream internals
-import {YieldRouter} from "./YieldRouter.sol";
+import {YieldRouter} from "../src/core/YieldRouter.sol";
 import {StableStreamNFT} from "./StableStreamNFT.sol";
-import {RangeCalculator} from "./libraries/RangeCalculator.sol";
-import {YieldAccounting} from "./libraries/YieldAccounting.sol";
-import {TransientStorage} from "./libraries/TransientStorage.sol";
-import {DynamicFeeModule} from "./DynamicFeeModule.sol";
+import {RangeCalculator} from "../src/core/libraries/RangeCalculator.sol";
+import {YieldAccounting} from "../src/core/libraries/YieldAccounting.sol";
+import {TransientStorage} from "../src/core/libraries/TransientStorage.sol";
+import {DynamicFeeModule} from "../src/core/libraries/DynamicFeeModule.sol";
 
 /// @title StableStreamHook
 /// @notice Uniswap v4 hook that automatically routes idle USDC from out-of-range

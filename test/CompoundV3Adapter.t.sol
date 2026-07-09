@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {CompoundV3Adapter} from "../src/adapters/CompoundV3Adapter.sol";
+import {CompoundV3Adapter} from "../src/core/adapters/CompoundV3Adapter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // ---------------------------------------------------------------------------

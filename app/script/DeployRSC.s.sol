@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {RangeMonitorRSC} from "../src/reactive/RangeMonitorRSC.sol";
+import {RangeMonitorRSC} from "../../src/core/reactive/RangeMonitorRSC.sol";
 
 /// @title DeployRSC
 /// @notice Deploys RangeMonitorRSC on Reactive Network Lasna testnet (chain ID 5318007).

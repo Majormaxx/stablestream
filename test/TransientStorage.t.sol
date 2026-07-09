@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {TransientStorage} from "../src/libraries/TransientStorage.sol";
+import {TransientStorage} from "../src/core/libraries/TransientStorage.sol";
 
 /// @title TransientStorageTest
 /// @notice Unit tests for the TransientStorage EIP-1153 TSTORE/TLOAD library.

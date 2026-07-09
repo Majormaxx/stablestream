@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {DynamicFeeModule} from "../src/DynamicFeeModule.sol";
+import {DynamicFeeModule} from "../src/core/libraries/DynamicFeeModule.sol";
 
 /// @title DynamicFeeTest
 /// @notice Unit tests for DynamicFeeModule.

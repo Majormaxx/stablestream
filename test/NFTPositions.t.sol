@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {StableStreamNFT} from "../src/StableStreamNFT.sol";
+import {StableStreamNFT} from "../app/StableStreamNFT.sol";
 
 /// @title NFTPositionsTest
 /// @notice Unit tests for StableStreamNFT ERC-721 position receipts.

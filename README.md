@@ -1,12 +1,14 @@
 # StableStream
 
-> Automated yield routing for out-of-range concentrated USDC liquidity — powered by a Uniswap v4 Hook and a Reactive Network RSC running autonomously across two chains.
+[![Solidity](https://img.shields.io/badge/solidity-0.8.26-blue)](https://soliditylang.org)
+[![Foundry](https://img.shields.io/badge/built%20with-Foundry-ff69b4)](https://book.getfoundry.sh)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-150%20passing-brightgreen)](https://github.com/stablestream/stablestream)
+[![Unichain Sepolia](https://img.shields.io/badge/chain-Unichain%20Sepolia-lightgrey)](https://sepolia.uniscan.xyz)
 
-StableStream solves the **idle capital problem** in concentrated liquidity. When a stablecoin LP position falls out of range, USDC sits inert earning nothing. StableStream detects this in real time via the Uniswap v4 hook lifecycle, routes the idle capital to Compound V3, and recalls it **just-in-time** before the next swap — fully automated through a [Reactive Smart Contract](https://dev.reactive.network/) on the Reactive Network with zero off-chain infrastructure.
+Yield infrastructure for out-of-range concentrated USDC liquidity. Detects idle positions through Uniswap v4 hooks, routes capital to Compound V3, and recalls it just-in-time before the next swap -- fully automated via a Reactive Network RSC with no off-chain infrastructure.
 
----
-
-## Live Deployment
+## Deployments
 
 | Contract | Chain | Address |
 |---|---|---|
@@ -14,260 +16,341 @@ StableStream solves the **idle capital problem** in concentrated liquidity. When
 | `YieldRouter` | Unichain Sepolia (1301) | [`0xc69a63B6FbB684f1aC47BDe6613ed49B66A9feeA`](https://sepolia.uniscan.xyz/address/0xc69a63B6FbB684f1aC47BDe6613ed49B66A9feeA) |
 | `CompoundV3Adapter` | Unichain Sepolia (1301) | [`0x67fD183808Dc4B886b20946456F3fD81f488D2d7`](https://sepolia.uniscan.xyz/address/0x67fD183808Dc4B886b20946456F3fD81f488D2d7) |
 | `StableStreamNFT` | Unichain Sepolia (1301) | [`0x6f265EB778C44118cfc8484cA44A2Ea216ea998C`](https://sepolia.uniscan.xyz/address/0x6f265EB778C44118cfc8484cA44A2Ea216ea998C) |
-| `RangeMonitorRSC` | **Reactive Network — Lasna (5318007)** | [`0xa86591459C15d12F13AbaDf0d78Ec56F3e920a80`](https://lasna.reactscan.net/address/0xa86591459C15d12F13AbaDf0d78Ec56F3e920a80) |
+| `RangeMonitorRSC` | Reactive Network Lasna (5318007) | [`0xa86591459C15d12F13AbaDf0d78Ec56F3e920a80`](https://lasna.reactscan.net/address/0xa86591459C15d12F13AbaDf0d78Ec56F3e920a80) |
 
 **Frontend:** https://stablestream.vercel.app
 
 ---
 
-## The Problem
+## Problem
 
-Concentrated liquidity is capital-efficient when in range — and completely idle when out of range. For stablecoin pairs this is particularly wasteful: a tight USDC position can go out of range for hours or days with no mechanism to put that capital to work.
-
-Standard mitigations require active LP monitoring or centralised keeper bots. StableStream replaces both with an autonomous, on-chain event-driven system.
-
----
+Concentrated liquidity positions in stablecoin pairs sit idle when the price moves out of range. For tight USDC ranges this can last hours or days with no yield. Standard solutions need either active monitoring or keeper bots.
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                   Unichain Sepolia (1301)                    │
-│                                                              │
-│   LP                                                         │
-│    │  deposit(usdc, tickLower, tickUpper)                    │
-│    ▼                                                         │
-│  StableStreamHook ─ afterAddLiquidity ──► mint NFT receipt   │
-│         │                                                    │
-│         │  afterSwap()  ─ tick crossed out of range         │
-│         │               ─ emit PositionLeftRange(id, tick)  │
-│         │                                                    │
-│         │  beforeSwap() ─ tick re-entering range            │
-│         │               ─ emit PositionEnteredRange(id)     │
-│         │                                                    │
-│         │◄── routeToYield(positionId) ─────────────────┐    │
-│         │◄── recallFromYield(positionId) ──────────┐   │    │
-└─────────┼──────────────────────────────────────────│───│────┘
-          │        callbacks (Unichain Sepolia)       │   │
-          │                                           │   │
-┌─────────┼───────────────────────────────────────────┼───┼────┐
-│         │   Reactive Network — Lasna (5318007)       │   │   │
-│                                                      │   │   │
-│      RangeMonitorRSC                                 │   │   │
-│         ├── subscribes → PositionLeftRange ──────────┘   │   │
-│         ├── subscribes → PositionEnteredRange ───────────┘   │
-│         ├── rate limit: MAX_CALLBACKS_PER_BLOCK              │
-│         ├── per-position cooldown: POSITION_COOLDOWN_BLOCKS  │
-│         └── overflow queue: flushQueue()                     │
-└──────────────────────────────────────────────────────────────┘
-          │
-          ▼  routeToYield / recallFromYield
-       YieldRouter
-          ├── APYVerifier   (TWAP anomaly detection)
-          ├── RiskEngine    (risk-weighted source selection)
-          └── CompoundV3Adapter ──► Compound V3 Comet (USDC)
+```mermaid
+flowchart TB
+    subgraph Unichain["Unichain Sepolia (1301)"]
+        LP[LP] -->|deposit| Hook[StableStreamHook]
+        Hook -->|afterAddLiquidity| NFT[StableStreamNFT]
+        Hook -->|afterSwap: PositionLeftRange| Events[Event Logs]
+        Hook -->|beforeSwap: PositionEnteredRange| Events
+        Hook -->|routeToYield / recallFromYield| YieldRouter[YieldRouter]
+        YieldRouter ---> APY[APYVerifier]
+        YieldRouter ---> Risk[RiskEngine]
+        YieldRouter ---> C3[CompoundV3Adapter]
+        C3 ---> Comet[Compound V3 Comet]
+    end
+
+    subgraph Reactive["Reactive Network Lasna (5318007)"]
+        RSC[RangeMonitorRSC]
+        RSC -->|subscribes to| Events
+        RSC -->|Callback| Hook
+    end
+
+    style Unichain fill:#e3f2fd,color:#1a1a2e,stroke:#90caf9
+    style Reactive fill:#f3e5f5,color:#1a1a2e,stroke:#ce93d8
 ```
 
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Smart contracts | Solidity 0.8, Uniswap v4 Hooks (`BaseHook`) |
-| Automation | Reactive Network RSC (`IReactive`, `ISubscriber`) |
-| Yield | Compound V3 Comet, Aave V3 |
-| Testing | Foundry — 181 tests across 10 suites |
-| Frontend | Next.js 14, wagmi, viem |
-| Chains | Unichain Sepolia (contracts) · Reactive Network Lasna (RSC) |
-
-### Position Lifecycle
+## System Lifecycle
 
 | Step | Trigger | Actor |
 |---|---|---|
 | 1. Deposit | `deposit(amount, tickLower, tickUpper)` | LP |
-| 2. NFT minted | `afterAddLiquidity` → `StableStreamNFT.mint()` | Hook |
+| 2. NFT minted | `afterAddLiquidity` -> `StableStreamNFT.mint()` | Hook |
 | 3. Price exits range | `afterSwap` emits `PositionLeftRange` | Hook |
-| 4. Capital routed | RSC calls `routeToYield` → USDC → Compound V3 | RSC → Hook |
+| 4. Capital routed | RSC calls `routeToYield` -> USDC -> Compound V3 | RSC |
 | 5. Price re-enters | `beforeSwap` emits `PositionEnteredRange` | Hook |
-| 6. JIT recall | RSC calls `recallFromYield` → USDC back to pool | RSC → Hook |
-| 7. Withdraw | `withdraw(positionId)` → capital + yield | LP |
+| 6. JIT recall | RSC calls `recallFromYield` -> USDC back to pool | RSC |
+| 7. Withdraw | `withdraw(positionId)` -> capital + yield | LP |
 
 ---
 
 ## Reactive Network Integration
 
-This is the protocol's core technical differentiator. The Reactive Network enables **event-driven cross-chain automation** with no off-chain infrastructure.
+`RangeMonitorRSC` on Reactive Network Lasna subscribes to three events on `StableStreamHook`:
 
-### How it works
+| Event | Action |
+|---|---|
+| `PositionLeftRange(bytes32,int24)` | `routeToYield` callback |
+| `PositionEnteredRange(bytes32,int24)` | `recallFromYield` callback (JIT) |
+| `CapitalRouted(bytes32,address,uint256)` | Observational only |
 
-`RangeMonitorRSC` is deployed on **Reactive Network Lasna (chain ID 5318007)**. It holds three live subscriptions against `StableStreamHook` on Unichain Sepolia:
-
-```solidity
-// Subscribed event topics (registered in constructor via ISystemContract)
-keccak256("PositionLeftRange(bytes32,int24)")      → routeToYield callback
-keccak256("PositionEnteredRange(bytes32,int24)")   → recallFromYield callback (JIT)
-keccak256("CapitalRouted(bytes32,address,uint256)") → observational only
-```
-
-When a subscribed event fires on Unichain Sepolia, Reactive Network nodes call `react(LogRecord)` on the RSC. The RSC emits a `Callback` event that instructs the network to submit a transaction on Unichain Sepolia:
-
-```solidity
-function react(LogRecord calldata log) external vmOnly {
-    if (log.topic_0 == TOPIC_POSITION_LEFT_RANGE) {
-        _handlePositionLeftRange(log.topic_1, log.block_number);
-    } else if (log.topic_0 == TOPIC_POSITION_ENTERED_RANGE) {
-        _handlePositionEnteredRange(log.topic_1, log.block_number);
-    }
-}
-
-function _emitRouteToYield(bytes32 positionId) internal {
-    emit Callback(
-        DESTINATION_CHAIN_ID,  // Unichain Sepolia: 1301
-        callbackTarget,        // StableStreamHook address
-        CALLBACK_GAS_LIMIT,    // 300,000
-        abi.encodeWithSignature("routeToYield(bytes32)", positionId)
-    );
-}
-```
-
-### Rate limiting and safety
-
-Two configurable parameters protect against gas exhaustion and position thrashing:
+### Rate limiting
 
 | Parameter | Default | Setter |
 |---|---|---|
 | `MAX_CALLBACKS_PER_BLOCK` | 5 | `setMaxCallbacksPerBlock(uint256)` |
 | `POSITION_COOLDOWN_BLOCKS` | 10 | `setPositionCooldownBlocks(uint256)` |
 
-Positions exceeding the per-block cap are pushed to an overflow queue and drained via `flushQueue(maxCount)`. JIT recall (`recallFromYield`) bypasses all rate limits — capital must arrive before the swap executes.
+Positions exceeding the per-block cap queue as FIFO, drained via `flushQueue(maxCount)`. JIT recall bypasses rate limits.
 
-### Deployment note
+### Deployment
 
-The RSC **cannot** be deployed via `forge create` or `forge script`. The Reactive Network's system precompiles revert during simulation. Deployment requires raw bytecode via `cast send --create`:
+The RSC cannot be deployed via `forge create` or `forge script`. Reactive Network precompiles revert during simulation. Use `cast send --create`:
 
 ```bash
-BYTECODE=$(cat out/RangeMonitorRSC.sol/RangeMonitorRSC.json | \
-  python3 -c "import sys,json; print(json.load(sys.stdin)['bytecode']['object'])")
+BYTECODE=$(forge inspect RangeMonitorRSC bytecode)
 
 ARGS=$(cast abi-encode "constructor(address,address,uint256)" \
-  $HOOK_ADDRESS $OWNER_ADDRESS $ORIGIN_CHAIN_ID)
+  "$HOOK_ADDRESS" "$OWNER_ADDRESS" "$ORIGIN_CHAIN_ID")
 
 cast send \
-  --rpc-url https://lasna-rpc.rnk.dev/ \
-  --private-key $PRIVATE_KEY \
+  --rpc-url "$REACTIVE_RPC" \
+  --private-key "$PRIVATE_KEY" \
   --value "0.3ether" \
   --create "${BYTECODE}${ARGS#0x}"
 ```
 
-The `0.3 ETH` covers gas for outbound callbacks to Unichain Sepolia. Successful deployment confirms 3 subscription logs in the transaction receipt.
+The `0.3 ETH` funds outbound callbacks. A successful deployment produces 3 subscription logs in the receipt.
 
 ---
 
 ## Unichain Integration
 
-StableStream is deployed natively on **Unichain Sepolia** and uses Uniswap v4 primitives throughout.
-
 ### Hook permissions
 
-The hook address is mined via CREATE2 so its lower 14 bits encode the required permission flags — a Uniswap v4 requirement.
+The hook address is CREATE2-mined so its lower 14 bits encode the required permission flags.
 
-```solidity
-function getHookPermissions() public pure returns (Hooks.Permissions memory) {
-    return Hooks.Permissions({
-        afterAddLiquidity:     true,  // mint NFT, record position
-        beforeRemoveLiquidity: true,  // block direct removal of managed positions
-        beforeSwap:            true,  // JIT recall signal + dynamic fee
-        afterSwap:             true,  // detect range crossings
-        // all others: false
-    });
-}
-```
-
-### PoolManager unlock pattern
-
-All liquidity operations go through the v4 `PoolManager.unlock()` mechanism for atomic delta accounting:
-
-```solidity
-poolManager.unlock(abi.encode(ActionType.DEPOSIT, abi.encode(params)));
-// PoolManager calls back → _unlockCallback → _handleDeposit
-// Native ETH:  poolManager.settle{value: amount}()
-// ERC-20:      sync → safeTransfer → settle()
-```
+| Callback | Purpose |
+|---|---|
+| `afterAddLiquidity` | Mint NFT, record position |
+| `beforeRemoveLiquidity` | Block direct removal of managed positions |
+| `beforeSwap` | JIT recall signal + dynamic fee |
+| `afterSwap` | Detect range crossings |
 
 ### Dynamic fees
 
-`DynamicFeeModule` computes swap fees that scale with the fraction of pool capital currently deployed to yield sources — compensating LPs for reduced swap availability:
+`DynamicFeeModule` scales swap fees with the fraction of pool capital deployed to yield sources.
 
 ```
-fee = BASE_FEE + (YIELD_PREMIUM × yieldRatio)
+fee = BASE_FEE + (YIELD_PREMIUM x yieldRatio)
 ```
 
 Returned from `beforeSwap` using `LPFeeLibrary.DYNAMIC_FEE_FLAG`.
 
 ### EIP-1153 transient storage
 
-The `pendingRecall` flag uses `TSTORE`/`TLOAD` (EIP-1153) instead of a persistent mapping — saving ~22,000 gas per flag versus cold `SSTORE`. The RSC's per-position cooldown provides cross-transaction idempotency.
+The `pendingRecall` flag uses `TSTORE`/`TLOAD` instead of persistent storage, saving ~22,000 gas per flag versus cold `SSTORE`. The RSC's per-position cooldown provides cross-transaction idempotency.
 
 ### Pool configuration
 
 | Parameter | Value |
 |---|---|
 | Chain | Unichain Sepolia (1301) |
-| Token0 | ETH (native — `address(0)`) |
+| Token0 | ETH (native, `address(0)`) |
 | Token1 | USDC `0x31d0220469e10c4E71834a79b1f276d740d3768F` |
-| Fee tier | Dynamic (`DYNAMIC_FEE_FLAG`) |
+| Fee tier | Dynamic |
 | Tick spacing | 10 |
 | Initial sqrtPrice | 2^96 (tick = 0) |
-| Pool ID | `0x2af851d6f565ece7e573e814a3c453b0f75b4f56a55307e6dffdc0f91bb3ebed` |
 
 ---
 
-## Contract Reference
+## Contracts
 
 ### StableStreamHook
 
-The central contract. Implements `IHooks` and acts as a delegated position manager.
+The hook contract. Implements `IHooks` and acts as a delegated position manager.
 
 | Function | Description |
 |---|---|
-| `deposit(amount, tickLower, tickUpper)` | Add USDC as concentrated liquidity; mint NFT receipt |
-| `withdraw(positionId)` | Remove liquidity + accrued yield; burn NFT |
-| `routeToYield(positionId)` | RSC-triggered — remove idle liquidity → Compound V3 |
-| `recallFromYield(positionId)` | RSC-triggered — Compound V3 → re-add to pool (JIT) |
-| `setReactiveContract(rsc)` | Owner — register the Reactive Network RSC address |
-| `getDynamicFee(poolId)` | View — current computed swap fee |
-| `isPendingRecall(positionId)` | View — EIP-1153 transient JIT flag |
+| `deposit(amount, tickLower, tickUpper)` | Add USDC as concentrated liquidity; mint NFT |
+| `withdraw(positionId)` | Remove liquidity + yield; burn NFT |
+| `routeToYield(positionId)` | RSC-triggered: idle liquidity to Compound V3 |
+| `recallFromYield(positionId)` | RSC-triggered: Compound V3 back to pool |
+| `setReactiveContract(rsc)` | Owner only |
 
 ### YieldRouter
 
-Routes USDC to the highest risk-adjusted yield source from up to 8 registered adapters.
+Routes USDC to the highest risk-adjusted yield source.
 
 | Feature | Detail |
 |---|---|
-| Multi-source routing | Fixed array, `MAX_SOURCES = 8`, O(n) APY scan per routing decision |
-| APY anomaly detection | `APYVerifier` — rolling TWAP; rejects sources reporting > 2× trailing average |
-| Risk-weighted selection | `RiskEngine` — owner-assigned risk scores, LP-configurable tolerance |
-| Emergency exit | `withdrawAll()` — drains all capital from active source in one tx |
+| Multi-source routing | Fixed array, `MAX_SOURCES = 8` |
+| APY anomaly detection | `APYVerifier` -- rolling TWAP rejects >2x trailing average |
+| Risk-weighted selection | `RiskEngine` -- owner-assigned risk scores |
+| Emergency exit | `withdrawAll()` -- drains all sources in one tx |
 
 ### RangeMonitorRSC
 
-Deployed on Reactive Network Lasna. Monitors StableStreamHook and dispatches autonomous callbacks.
+Reactive Network automation contract. Monitors hook events, dispatches callbacks.
 
 | Feature | Detail |
 |---|---|
 | Subscriptions | 3 event topics on `StableStreamHook` |
 | Rate limiting | Per-block cap + per-position cooldown |
-| Overflow queue | `bytes32[]` FIFO, drained via `flushQueue(maxCount)` |
-| JIT bypass | `recallFromYield` skips rate limit — capital must arrive before swap |
-| Owner controls | `rnOnly` modifier — callable as a regular tx on Reactive Network |
+| Overflow queue | `bytes32[]` FIFO |
+| JIT bypass | `recallFromYield` skips rate limit |
 
 ### Adapters
 
-| Adapter | Protocol | Notes |
+| Adapter | Protocol | Status |
 |---|---|---|
-| `CompoundV3Adapter` | Compound V3 Comet | USDC market; `setMockAPY(bps)` for testnet use |
-| `AaveV3Adapter` | Aave V3 | Ready; not yet live on Unichain Sepolia |
-| `NativeStakeAdapter` | ETH native staking | For native ETH yield routing |
+| `CompoundV3Adapter` | Compound V3 Comet | Live (USDC market) |
+| `AaveV3Adapter` | Aave V3 | Ready, pending Unichain Sepolia support |
+| `NativeStakeAdapter` | ETH native staking | Ready |
+
+### IYieldSource interface
+
+Every yield adapter implements `IYieldSource` so `YieldRouter` can treat Compound, Aave, and future sources identically.
+
+```solidity
+interface IYieldSource {
+    // Mutative
+    function deposit(uint256 amount) external returns (uint256 shares);
+    function withdraw(uint256 amount) external returns (uint256 received);
+    function withdrawAll() external returns (uint256 received);
+
+    // View
+    function balanceOf(address account) external view returns (uint256);
+    function currentAPY() external view returns (uint256);     // BPS (100 = 1%)
+    function asset() external view returns (address);
+    function maxDeposit() external view returns (uint256);
+}
+```
+
+All amounts are in the underlying asset (USDC at 6 decimals). APY is in basis points (10,000 = 100%). Implementations return 0 from `currentAPY()` when the rate cannot be fetched rather than reverting, so `YieldRouter` can always compare sources safely.
+
+---
+
+## Events
+
+### Hook events
+
+| Event | Indexed | Consumer |
+|---|---|---|
+| `PositionOpened(bytes32,address,int24,int24)` | positionId | RSC |
+| `PositionLeftRange(bytes32,int24)` | positionId | RSC |
+| `PositionEnteredRange(bytes32,int24)` | positionId | RSC |
+| `CapitalRouted(bytes32,address,uint256)` | positionId | Observational |
+| `CapitalRecalled(bytes32,address,uint256)` | positionId | Observational |
+| `PositionExited(bytes32,address,uint256)` | positionId | Observational |
+| `StablecoinWhitelisted(address,address)` | token | Off-chain |
+| `NFTContractSet(address)` | nftContract | Off-chain |
+
+### YieldRouter events
+
+| Event | Indexed | Description |
+|---|---|---|
+| `SourceRegistered(address)` | source | New yield source added |
+| `SourceRemoved(address)` | source | Yield source removed |
+| `Routed(address,uint256)` | source | Capital routed to source |
+| `Recalled(address,uint256,uint256)` | source | Capital recalled from source |
+| `Switched(address,address,uint256)` | from, to | Active source changed |
+| `AuthorizedCallerUpdated(address,address)` | previous, next | Caller changed |
+| `RiskProfileSet(address,uint16,uint8)` | source | Risk profile updated |
+| `APYSnapshotSeeded(address,uint256)` | source | APY seeded |
+
+### RSC events
+
+| Event | Indexed | Description |
+|---|---|---|
+| `ReactTriggered(bytes32,string,uint256)` | positionId | RSC reacted to event |
+| `PositionQueued(bytes32,uint256)` | positionId | Position queued for rate limit |
+| `QueueFlushed(uint256)` | -- | Overflow queue drained |
+
+---
+
+## Custom Errors
+
+### StableStreamHook
+
+| Error | Parameters | Reverts when... |
+|---|---|---|
+| `NotOwnerOfPosition` | `bytes32 positionId` | Caller does not own the position |
+| `PositionAlreadyExists` | `bytes32 positionId` | Position ID collision on deposit |
+| `PositionNotFound` | `bytes32 positionId` | Position ID does not exist |
+| `PositionAlreadyClosed` | `bytes32 positionId` | Position was already withdrawn |
+| `PositionCurrentlyInRange` | `bytes32 positionId` | Attempt to route capital for an in-range position |
+| `PositionAlreadyRouted` | `bytes32 positionId` | Capital already deployed to yield |
+| `PositionNotRouted` | `bytes32 positionId` | No capital to recall |
+| `RoutingCooldownActive` | `bytes32 positionId, uint256 unlocksAt` | Position is rate-limited on routing |
+| `UnauthorizedRoutingCaller` | -- | Caller is not the authorized RSC |
+| `ZeroAmount` | -- | Zero-value deposit or action |
+| `CapitalInYield` | `bytes32 positionId` | Direct removeLiquidity blocked while capital in yield |
+
+### YieldRouter
+
+| Error | Parameters | Reverts when... |
+|---|---|---|
+| `Unauthorized` | -- | Caller lacks the required role |
+| `SourceAlreadyRegistered` | `address source` | Duplicate yield source registration |
+| `SourceNotRegistered` | `address source` | Source not in the active list |
+| `MaxSourcesReached` | -- | `MAX_SOURCES` (8) exceeded |
+| `NoActiveSources` | -- | No yield sources registered |
+| `ZeroAmount` | -- | Zero-value operation |
+| `InsufficientBalance` | `uint256 requested, uint256 available` | Not enough capital to route |
+
+### IYieldSource (all adapters)
+
+| Error | Parameters | Reverts when... |
+|---|---|---|
+| `ExceedsCapacity` | `uint256 requested, uint256 available` | Deposit/withdrawal exceeds adapter cap |
+| `ZeroAmount` | -- | Zero-value deposit/withdrawal |
+
+### NativeStakeAdapter
+
+| Error | Parameters | Reverts when... |
+|---|---|---|
+| `SlippageExceeded` | `uint256 expectedMin, uint256 actual` | ETH withdrawal slippage exceeds tolerance |
+| `EthFloorPriceNotSet` | -- | Minimum ETH floor price not configured |
+
+### StableStreamNFT
+
+| Error | Parameters | Reverts when... |
+|---|---|---|
+| `OnlyHook` | -- | Caller is not the hook contract |
+
+### YieldSource adapters (shared)
+
+| Error | Parameters | Reverts when... |
+|---|---|---|
+| `Unauthorized` | -- | Caller not authorized for deposit/withdraw |
+
+---
+
+## Access Control
+
+| Contract | Role | Functions |
+|---|---|---|
+| `StableStreamHook` | Owner (`onlyOwner`) | `setReactiveContract`, `withdraw` admin |
+| `YieldRouter` | Owner (`onlyOwner`) | `registerSource`, `removeSource`, `emergencyWithdrawAll`, `setRiskProfile`, `setAuthorizedCaller`, `seedAPYSnapshot` |
+| `YieldRouter` | Authorized (`onlyAuthorized`) | `routeToYield`, `recallAllFromYield` |
+| `RangeMonitorRSC` | Owner (`onlyOwner`) | `setMaxCallbacksPerBlock`, `setPositionCooldownBlocks`, `transferOwnership`, `withdrawEth` |
+| `RangeMonitorRSC` | Reactive Network (`vmOnly`) | `react` |
+| Adapters | Owner (`onlyOwner`) | `setAuthorizedCaller`, `setMockAPY`, `setMaxCapacity` |
+| Adapters | Authorized (`onlyAuthorized`) | `deposit`, `withdraw`, `withdrawAll` |
+
+---
+
+## CREATE2 Salt Derivation
+
+The hook address must have specific lower 14 bits set to declare its permission flags. The deploy script brute-forces a salt to find an address that matches:
+
+```solidity
+// Required hook permissions (4 flags)
+uint160 constant HOOK_FLAGS =
+    Hooks.AFTER_ADD_LIQUIDITY_FLAG |      // 1 << 10 = 0x0400
+    Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |  // 1 << 9  = 0x0200
+    Hooks.BEFORE_SWAP_FLAG |              // 1 << 7  = 0x0080
+    Hooks.AFTER_SWAP_FLAG;                // 1 << 6  = 0x0040
+
+// Brute-force salt to match permission bits
+address foundryFactory = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+bytes32 salt;
+address hookAddress;
+for (uint256 i = 0; i < 160_000; i++) {
+    salt = bytes32(i);
+    hookAddress = address(uint160(uint256(
+        keccak256(abi.encodePacked(
+            bytes1(0xff), foundryFactory, salt, keccak256(hookCreationCode)
+        ))
+    )));
+    if (uint160(hookAddress) & 0x3FFF == uint160(HOOK_FLAGS)) break;
+}
+```
+
+Foundry routes `new Contract{salt: s}()` through a deterministic factory at `0x4e59b4...` that follows the standard CREATE2 scheme. The loop increments a uint256 salt until the computed address AND 0x3FFF matches `HOOK_FLAGS`. The search typically converges within 100,000 iterations.
 
 ---
 
@@ -275,48 +358,84 @@ Deployed on Reactive Network Lasna. Monitors StableStreamHook and dispatches aut
 
 ```
 src/
-├── StableStreamHook.sol        # Uniswap v4 hook — core protocol logic
-├── YieldRouter.sol             # Multi-source yield routing with APY ranking
-├── StableStreamNFT.sol         # ERC-721 position receipt tokens
-├── DynamicFeeModule.sol        # Yield-ratio-scaled swap fees
-├── adapters/
-│   ├── CompoundV3Adapter.sol   # Compound V3 Comet integration
-│   ├── AaveV3Adapter.sol       # Aave V3 integration
-│   └── NativeStakeAdapter.sol  # Native ETH staking
-├── libraries/
-│   ├── RangeCalculator.sol     # Tick math and range detection
-│   ├── YieldAccounting.sol     # Per-position yield tracking
-│   ├── APYVerifier.sol         # TWAP anomaly detection
-│   ├── RiskEngine.sol          # Risk-weighted source scoring
-│   └── TransientStorage.sol    # EIP-1153 TSTORE/TLOAD wrapper
-├── reactive/
-│   └── RangeMonitorRSC.sol     # Reactive Network automation contract
-└── interfaces/
+├── core/
+│   ├── YieldRouter.sol              # Multi-source yield routing
+│   ├── interfaces/
+│   │   └── IYieldSource.sol         # Yield adapter interface
+│   ├── adapters/
+│   │   ├── CompoundV3Adapter.sol    # Compound V3 Comet
+│   │   ├── AaveV3Adapter.sol        # Aave V3
+│   │   └── NativeStakeAdapter.sol   # ETH native staking
+│   ├── libraries/
+│   │   ├── APYVerifier.sol          # TWAP anomaly detection
+│   │   ├── DynamicFeeModule.sol     # Yield-ratio swap fees
+│   │   ├── RangeCalculator.sol      # Tick math and range detection
+│   │   ├── RiskEngine.sol           # Risk-weighted source scoring
+│   │   ├── TransientStorage.sol     # EIP-1153 TSTORE/TLOAD wrapper
+│   │   └── YieldAccounting.sol      # Per-position yield tracking
+│   └── reactive/
+│       └── RangeMonitorRSC.sol      # Reactive Network automation
 
-script/
-├── Deploy.s.sol                # Full protocol deployment (Unichain Sepolia)
-├── DeployRSC.s.sol             # RSC deployment (Lasna — use cast send --create)
-└── InitPool.s.sol              # Pool initialisation
+app/                                  # Application-layer contracts
+├── StableStreamHook.sol             # Hook implementation
+├── StableStreamNFT.sol              # ERC-721 position receipt
+└── script/
+    ├── Deploy.s.sol                 # Full protocol deployment
+    ├── DeployRSC.s.sol              # RSC deployment
+    └── InitPool.s.sol               # Pool initialisation
 
-test/                           # 181 Foundry test cases across 10 suites
-frontend/                       # Next.js + wagmi + viem interface
+test/                                # 150 tests across 10 suites
+frontend/                            # Next.js interface
 ```
 
 ---
 
-## Running Tests
+## Gas
 
-```bash
+Estimated costs from testnet measurements (Unichain Sepolia, 1301):
+
+| Operation | Gas |
+|---|---|
+| `deposit` | ~110,000 |
+| `withdraw` | ~80,000 |
+| `routeToYield` | ~290,000 |
+| `recallFromYield` | ~240,000 |
+| `emergencyWithdrawAll` | ~320,000 |
+| `registerSource` | ~19,000 |
+| NFT mint | ~65,000 |
+
+Actual costs depend on pool state and yield source conditions.
+
+---
+
+## Tests
+
+```
 forge test
 ```
 
-10 test suites, 181 test cases covering hook permissions, range logic, yield routing, NFT positions, dynamic fees, risk engine, APY verification, transient storage, multi-token support, and security edge cases.
+150 tests across 10 suites:
 
-```bash
-forge test --match-contract SecurityEdgeCases -vvv   # reentrancy, access control
-forge test --match-contract Integration -vvv         # full lifecycle
-forge test --match-contract DynamicFee -vvv          # fee scaling with yield ratio
 ```
+forge test --match-contract SecurityEdgeCases -vvv
+forge test --match-contract Integration -vvv
+forge test --match-contract DynamicFee -vvv
+```
+
+### Test suites
+
+| Suite | Tests | Area |
+|---|---|---|
+| `APYVerifierTest` | 10 | TWAP snapshots, anomaly detection |
+| `CompoundV3AdapterTest` | 26 | Deposit, withdraw, APY, fuzz |
+| `DynamicFeeTest` | 8 | Fee scaling, boundary checks |
+| `IntegrationTest` | 12 | Full lifecycle, multi-stream |
+| `MultiTokenTest` | 9 | Token routing, whitelist |
+| `NFTPositionsTest` | 16 | Mint, burn, approvals |
+| `RiskEngineTest` | 10 | Risk scoring, thresholds |
+| `SecurityEdgeCasesTest` | 26 | Reentrancy, access control, fuzz |
+| `StableStreamHookTest` | 23 | Range detection, yield ops |
+| `TransientStorageTest` | 10 | TSTORE/TLOAD roundtrip |
 
 ---
 
@@ -331,45 +450,52 @@ forge install
 forge build
 forge test
 
-# Deploy to Unichain Sepolia
-cp .env.example .env   # set PRIVATE_KEY
-forge script script/Deploy.s.sol:DeployStableStream \
-  --rpc-url https://sepolia.unichain.org \
+cp .env.example .env   # set PRIVATE_KEY and RPC URLs
+forge script app/script/Deploy.s.sol:DeployStableStream \
+  --rpc-url "$UNICHAIN_SEPOLIA_RPC" \
   --broadcast -vvvv
 
-# Deploy RSC to Reactive Network (cast send --create required)
-# See script/DeployRSC.s.sol for the full cast command
+# RSC deployment requires cast send --create (see app/script/DeployRSC.s.sol)
 ```
 
-**Frontend:**
+### Environment
 
-```bash
-cd frontend && npm install && npm run dev
-# http://localhost:3000
-```
+| Variable | Required | Default |
+|---|---|---|
+| `UNICHAIN_SEPOLIA_RPC` | Yes | `https://sepolia.unichain.org` |
+| `UNICHAIN_RPC` | Yes | -- |
+| `REACTIVE_RPC` | Yes | `https://kopli-rpc.rnk.dev/` |
+| `PRIVATE_KEY` | Yes | -- |
+
+See `.env.example` for the full template.
+
+---
+
+## Security
+
+This code has **not been audited**. Use at your own risk.
+
+Key security properties:
+
+- **No reentrancy into pool during callbacks** -- v4 blocks reentrancy into `PoolManager` during hook execution. All state-changing yield operations happen in external functions, not inside callbacks.
+- **Only authorized callers can route/recall capital** -- `routeToYield` and `recallFromYield` are gated by `onlyAuthorized` on the hook side and additionally by the RSC's access control.
+- **Emergency drain** -- `withdrawAll()` on `YieldRouter` bypasses normal routing and returns all capital in one transaction.
+- **APY anomaly detection** -- `APYVerifier` rejects yield sources reporting >2x the trailing TWAP, preventing a compromised adapter from draining capital.
+- **Rate-limited RSC callbacks** -- prevents gas exhaustion from event spam.
+- **No elevation of privilege** -- `transferOwnership` is a two-step pattern where applicable.
 
 ---
 
 ## Why Reactive Network
 
-The automation requirement here is **reactive, not scheduled**. A keeper with a cron job would either poll too frequently (wasting gas) or too slowly (leaving capital idle). An RSC fires within the same block as the triggering event — on Unichain's 1-second block times that means JIT recall can complete in the same second that `beforeSwap` detects a range re-entry.
+The automation requirement is reactive, not scheduled. A keeper polling on a cron job either wastes gas on frequent checks or leaves capital idle between polls. The RSC fires within the same block as the triggering event -- on Unichain's 1-second block times, JIT recall completes in the same second `beforeSwap` detects a range re-entry.
 
-The integration follows the canonical two-contract Reactive Network pattern:
+The integration uses the canonical two-contract Reactive Network pattern:
 
-1. **Reactive Network (Lasna):** `RangeMonitorRSC` — subscribes to events, applies rate limits, emits `Callback`
-2. **Destination chain (Unichain Sepolia):** `StableStreamHook` — exposes `routeToYield` / `recallFromYield` gated by `onlyReactive`
+1. **Reactive Network (Lasna):** `RangeMonitorRSC` subscribes to events, applies rate limits, emits `Callback`
+2. **Destination chain (Unichain Sepolia):** `StableStreamHook` exposes `routeToYield` / `recallFromYield` gated by `onlyReactive`
 
-StableStream has **zero off-chain dependencies** — no bots, no oracles, no centralised relayers.
-
----
-
-## Hackathon Track
-
-Built for the **Uniswap Hookathon** with the **Reactive Network prize track**.
-
-- **Automated Liquidity Provisioning** — RSC-driven rebalancing of concentrated USDC positions to yield
-- **Asynchronous Swap Hooks** — cross-chain event → callback pattern enabling JIT capital recall
-- **Liquidity Optimizations** — idle capital earns yield between range crossings with no LP action required
+Zero off-chain dependencies. No bots, no oracles, no relayers.
 
 ---
 
