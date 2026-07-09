@@ -12,6 +12,7 @@ import {TransientStorage}  from "../src/core/libraries/TransientStorage.sol";
 import {DynamicFeeModule}  from "../src/core/libraries/DynamicFeeModule.sol";
 import {StableStreamNFT}   from "../app/StableStreamNFT.sol";
 import {StableStreamHook}  from "../app/StableStreamHook.sol";
+import {IdleCapitalYieldModule} from "../src/core/IdleCapitalYieldModule.sol";
 import {YieldRouter}       from "../src/core/YieldRouter.sol";
 import {IYieldSource}      from "../src/core/interfaces/IYieldSource.sol";
 
@@ -361,12 +362,12 @@ contract SecurityEdgeCasesTest is Test {
     function test_sec_hook_capitalInYieldIsCustomError() public {
         // We can't invoke beforeRemoveLiquidity directly (onlyPoolManager).
         // Instead verify the custom error is declared at the ABI level by its selector.
-        bytes4 expected = StableStreamHook.CapitalInYield.selector;
+        bytes4 expected = IdleCapitalYieldModule.CapitalInYield.selector;
         assertNotEq(expected, bytes4(0), "CapitalInYield must have a non-zero selector");
         // Also verify it differs from all other hook errors (no selector collision).
-        assertNotEq(expected, StableStreamHook.PositionNotFound.selector);
-        assertNotEq(expected, StableStreamHook.NotOwnerOfPosition.selector);
-        assertNotEq(expected, StableStreamHook.PositionAlreadyClosed.selector);
+        assertNotEq(expected, IdleCapitalYieldModule.PositionNotFound.selector);
+        assertNotEq(expected, IdleCapitalYieldModule.NotOwnerOfPosition.selector);
+        assertNotEq(expected, IdleCapitalYieldModule.PositionAlreadyClosed.selector);
     }
 
     /// @notice setNFT is owner-only; attacker cannot set a malicious NFT contract.

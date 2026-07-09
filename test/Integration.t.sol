@@ -14,6 +14,7 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 
 import {StableStreamHook} from "../app/StableStreamHook.sol";
+import {IdleCapitalYieldModule} from "../src/core/IdleCapitalYieldModule.sol";
 import {YieldRouter} from "../src/core/YieldRouter.sol";
 import {IYieldSource} from "../src/core/interfaces/IYieldSource.sol";
 import {YieldAccounting} from "../src/core/libraries/YieldAccounting.sol";
@@ -304,11 +305,11 @@ contract IntegrationTest is Test {
 
         // ── 4. Verify error guards ─────────────────────────────────────────────
         vm.prank(address(0xDEAD));
-        vm.expectRevert(StableStreamHook.UnauthorizedRoutingCaller.selector);
+        vm.expectRevert(IdleCapitalYieldModule.UnauthorizedRoutingCaller.selector);
         hook.routeToYield(positionId);
 
         vm.prank(address(0xDEAD));
-        vm.expectRevert(StableStreamHook.UnauthorizedRoutingCaller.selector);
+        vm.expectRevert(IdleCapitalYieldModule.UnauthorizedRoutingCaller.selector);
         hook.recallFromYield(positionId);
     }
 
@@ -513,12 +514,12 @@ contract IntegrationTest is Test {
 
         // routeToYield — only RSC or owner
         vm.prank(attacker);
-        vm.expectRevert(StableStreamHook.UnauthorizedRoutingCaller.selector);
+        vm.expectRevert(IdleCapitalYieldModule.UnauthorizedRoutingCaller.selector);
         hook.routeToYield(fakeId);
 
         // recallFromYield — only RSC or owner
         vm.prank(attacker);
-        vm.expectRevert(StableStreamHook.UnauthorizedRoutingCaller.selector);
+        vm.expectRevert(IdleCapitalYieldModule.UnauthorizedRoutingCaller.selector);
         hook.recallFromYield(fakeId);
 
         // YieldRouter: registerSource — only owner
@@ -535,7 +536,7 @@ contract IntegrationTest is Test {
     function test_withdraw_revertsForNonexistentPosition() public {
         bytes32 fakeId = keccak256("nonexistent");
         vm.prank(LP_A);
-        vm.expectRevert(abi.encodeWithSelector(StableStreamHook.PositionNotFound.selector, fakeId));
+        vm.expectRevert(abi.encodeWithSelector(IdleCapitalYieldModule.PositionNotFound.selector, fakeId));
         hook.withdraw(fakeId);
     }
 

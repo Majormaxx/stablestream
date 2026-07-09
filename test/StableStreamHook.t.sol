@@ -12,6 +12,7 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 import {StableStreamHook} from "../app/StableStreamHook.sol";
+import {IdleCapitalYieldModule} from "../src/core/IdleCapitalYieldModule.sol";
 import {YieldRouter} from "../src/core/YieldRouter.sol";
 import {RangeCalculator} from "../src/core/libraries/RangeCalculator.sol";
 import {YieldAccounting} from "../src/core/libraries/YieldAccounting.sol";
@@ -407,21 +408,21 @@ contract StableStreamHookTest is Test {
 
     function test_routeToYield_revertsForUnauthorizedCaller() public {
         bytes32 fakeId = keccak256("fake");
-        vm.expectRevert(StableStreamHook.UnauthorizedRoutingCaller.selector);
+        vm.expectRevert(IdleCapitalYieldModule.UnauthorizedRoutingCaller.selector);
         vm.prank(alice);
         hook.routeToYield(fakeId);
     }
 
     function test_recallFromYield_revertsForUnauthorizedCaller() public {
         bytes32 fakeId = keccak256("fake");
-        vm.expectRevert(StableStreamHook.UnauthorizedRoutingCaller.selector);
+        vm.expectRevert(IdleCapitalYieldModule.UnauthorizedRoutingCaller.selector);
         vm.prank(alice);
         hook.recallFromYield(fakeId);
     }
 
     function test_routeToYield_revertsForNonexistentPosition() public {
         bytes32 fakeId = keccak256("nonexistent");
-        vm.expectRevert(abi.encodeWithSelector(StableStreamHook.PositionNotFound.selector, fakeId));
+        vm.expectRevert(abi.encodeWithSelector(IdleCapitalYieldModule.PositionNotFound.selector, fakeId));
         vm.prank(rsc);
         hook.routeToYield(fakeId);
     }

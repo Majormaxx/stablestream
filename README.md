@@ -3,7 +3,7 @@
 [![Solidity](https://img.shields.io/badge/solidity-0.8.26-blue)](https://soliditylang.org)
 [![Foundry](https://img.shields.io/badge/built%20with-Foundry-ff69b4)](https://book.getfoundry.sh)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-150%20passing-brightgreen)](https://github.com/stablestream/stablestream)
+[![Tests](https://img.shields.io/badge/tests-161%20passing-brightgreen)](https://github.com/stablestream/stablestream)
 [![Unichain Sepolia](https://img.shields.io/badge/chain-Unichain%20Sepolia-lightgrey)](https://sepolia.uniscan.xyz)
 
 Yield infrastructure for out-of-range concentrated USDC liquidity. Detects idle positions through Uniswap v4 hooks, routes capital to Compound V3, and recalls it just-in-time before the next swap -- fully automated via a Reactive Network RSC with no off-chain infrastructure.
@@ -32,20 +32,22 @@ Concentrated liquidity positions in stablecoin pairs sit idle when the price mov
 flowchart TB
     subgraph Unichain["Unichain Sepolia (1301)"]
         LP[LP] -->|deposit| Hook[StableStreamHook]
-        Hook -->|afterAddLiquidity| NFT[StableStreamNFT]
-        Hook -->|afterSwap: PositionLeftRange| Events[Event Logs]
-        Hook -->|beforeSwap: PositionEnteredRange| Events
-        Hook -->|routeToYield / recallFromYield| YieldRouter[YieldRouter]
+        Hook -->|inherits| Module[IdleCapitalYieldModule]
+        Module -->|afterAddLiquidity| Track[Position Tracking]
+        Module -->|afterSwap: PositionLeftRange| Events[Event Logs]
+        Module -->|beforeSwap: PositionEnteredRange| Events
+        Module -->|routeToYield / recallFromYield| YieldRouter[YieldRouter]
         YieldRouter ---> APY[APYVerifier]
         YieldRouter ---> Risk[RiskEngine]
         YieldRouter ---> C3[CompoundV3Adapter]
         C3 ---> Comet[Compound V3 Comet]
+        Hook ---> NFT[StableStreamNFT]
     end
 
     subgraph Reactive["Reactive Network Lasna (5318007)"]
         RSC[RangeMonitorRSC]
         RSC -->|subscribes to| Events
-        RSC -->|Callback| Hook
+        RSC -->|Callback| Module
     end
 
     style Unichain fill:#e3f2fd,color:#1a1a2e,stroke:#90caf9
@@ -66,9 +68,92 @@ flowchart TB
 
 ---
 
+## IdleCapitalYieldModule
+
+`IdleCapitalYieldModule` is an abstract Solidity contract that provides reusable idle-capital yield routing for any Uniswap v4 hook. Inherit it in your hook to get position tracking, four callback hooks, and RSC-triggered yield routing -- zero product coupling.
+
+### Quick integration (11 lines of Solidity)
+
+```solidity
+contract MyHook is IdleCapitalYieldModule {
+    constructor(IPoolManager pm, YieldRouter router, address asset, address owner)
+        IdleCapitalYieldModule(pm, router, asset, owner)
+    {}
+}
+```
+
+See [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) for the full walkthrough.
+
+### What the module provides
+
+| Feature | Inherited behavior |
+|---|---|
+| Position tracking | `deposit()`, `withdraw()`, `getPosition()`, `getOwnerPositions()` |
+| Hook callbacks | `afterAddLiquidity`, `beforeRemoveLiquidity`, `beforeSwap`, `afterSwap` |
+| Yield routing | `routeToYield()`, `recallFromYield()` -- RSC-triggered |
+| Dynamic fees | `getDynamicFee()` -- scales fee with deployment ratio |
+| Lifecycle hooks | `_onPositionOpened()`, `_onPositionClosed()` -- override for product logic |
+| Rate limiting | Cooldown + per-block callback caps inherited from module |
+
+### Custom errors
+
+| Error | Parameters | Reverts when... |
+|---|---|---|
+| `NotOwnerOfPosition` | `bytes32 positionId` | Caller does not own the position |
+| `PositionAlreadyExists` | `bytes32 positionId` | Position ID collision on deposit |
+| `PositionNotFound` | `bytes32 positionId` | Position ID does not exist |
+| `PositionAlreadyClosed` | `bytes32 positionId` | Position was already withdrawn |
+| `PositionCurrentlyInRange` | `bytes32 positionId` | Attempt to route capital for an in-range position |
+| `PositionAlreadyRouted` | `bytes32 positionId` | Capital already deployed to yield |
+| `PositionNotRouted` | `bytes32 positionId` | No capital to recall |
+| `RoutingCooldownActive` | `bytes32 positionId, uint256 unlocksAt` | Position is rate-limited on routing |
+| `UnauthorizedRoutingCaller` | -- | Caller is not the authorized RSC |
+| `ZeroAmount` | -- | Zero-value deposit or action |
+| `CapitalInYield` | `bytes32 positionId` | Direct removeLiquidity blocked while capital in yield |
+
+Note: `NotOwnerOfPosition`, `PositionAlreadyExists`, `PositionNotFound`, `PositionAlreadyClosed`, `CapitalInYield`, `ZeroAmount`, and `UnauthorizedRoutingCaller` are shared with `StableStreamHook` via the inherited module.
+
+### Interface
+
+```solidity
+interface IIdleCapitalYieldModule {
+    event PositionOpened(bytes32 indexed positionId, address indexed owner, int24 tickLower, int24 tickUpper);
+    event PositionLeftRange(bytes32 indexed positionId, int24 tick);
+    event PositionEnteredRange(bytes32 indexed positionId, int24 tick);
+    event PositionExited(bytes32 indexed positionId, address indexed owner, uint256 totalWithdrawn);
+    event CapitalRouted(bytes32 indexed positionId, address indexed yieldSource, uint256 amount);
+    event CapitalRecalled(bytes32 indexed positionId, address indexed yieldSource, uint256 amount);
+
+    function deposit(IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData) external payable returns (bytes32 positionId);
+    function withdraw(bytes32 positionId) external;
+    function routeToYield(bytes32 positionId) external;
+    function recallFromYield(bytes32 positionId) external;
+    function getDynamicFee(int24 tick) external view returns (uint160 sqrtPriceX96);
+    function getPosition(bytes32 positionId) external view returns (TrackedPosition memory);
+    function getOwnerPositions(address owner) external view returns (bytes32[] memory);
+    function setReactiveContract(address rsc) external;
+}
+```
+
+---
+
+## StableStreamHook (reference implementation)
+
+`StableStreamHook` is a production-grade hook built on `IdleCapitalYieldModule`. It adds ERC-721 position receipts, multi-token whitelisting, and `onlyReactive` routing gating. Use it as-is or as a template for your own hook.
+
+| Function | Description |
+|---|---|
+| `deposit(amount, tickLower, tickUpper)` | Add USDC as concentrated liquidity; mint NFT |
+| `withdraw(positionId)` | Remove liquidity + yield; burn NFT |
+| `routeToYield(positionId)` | RSC-triggered: idle liquidity to Compound V3 |
+| `recallFromYield(positionId)` | RSC-triggered: Compound V3 back to pool |
+| `setReactiveContract(rsc)` | Owner only |
+
+---
+
 ## Reactive Network Integration
 
-`RangeMonitorRSC` on Reactive Network Lasna subscribes to three events on `StableStreamHook`:
+`RangeMonitorRSC` on Reactive Network Lasna subscribes to three events on the module interface:
 
 | Event | Action |
 |---|---|
@@ -85,7 +170,7 @@ flowchart TB
 
 Positions exceeding the per-block cap queue as FIFO, drained via `flushQueue(maxCount)`. JIT recall bypasses rate limits.
 
-### Deployment
+### RSC deployment
 
 The RSC cannot be deployed via `forge create` or `forge script`. Reactive Network precompiles revert during simulation. Use `cast send --create`:
 
@@ -148,18 +233,6 @@ The `pendingRecall` flag uses `TSTORE`/`TLOAD` instead of persistent storage, sa
 
 ## Contracts
 
-### StableStreamHook
-
-The hook contract. Implements `IHooks` and acts as a delegated position manager.
-
-| Function | Description |
-|---|---|
-| `deposit(amount, tickLower, tickUpper)` | Add USDC as concentrated liquidity; mint NFT |
-| `withdraw(positionId)` | Remove liquidity + yield; burn NFT |
-| `routeToYield(positionId)` | RSC-triggered: idle liquidity to Compound V3 |
-| `recallFromYield(positionId)` | RSC-triggered: Compound V3 back to pool |
-| `setReactiveContract(rsc)` | Owner only |
-
 ### YieldRouter
 
 Routes USDC to the highest risk-adjusted yield source.
@@ -177,7 +250,7 @@ Reactive Network automation contract. Monitors hook events, dispatches callbacks
 
 | Feature | Detail |
 |---|---|
-| Subscriptions | 3 event topics on `StableStreamHook` |
+| Subscriptions | 3 event topics on `IIdleCapitalYieldModule` |
 | Rate limiting | Per-block cap + per-position cooldown |
 | Overflow queue | `bytes32[]` FIFO |
 | JIT bypass | `recallFromYield` skips rate limit |
@@ -196,14 +269,11 @@ Every yield adapter implements `IYieldSource` so `YieldRouter` can treat Compoun
 
 ```solidity
 interface IYieldSource {
-    // Mutative
     function deposit(uint256 amount) external returns (uint256 shares);
     function withdraw(uint256 amount) external returns (uint256 received);
     function withdrawAll() external returns (uint256 received);
-
-    // View
     function balanceOf(address account) external view returns (uint256);
-    function currentAPY() external view returns (uint256);     // BPS (100 = 1%)
+    function currentAPY() external view returns (uint256);
     function asset() external view returns (address);
     function maxDeposit() external view returns (uint256);
 }
@@ -253,22 +323,6 @@ All amounts are in the underlying asset (USDC at 6 decimals). APY is in basis po
 
 ## Custom Errors
 
-### StableStreamHook
-
-| Error | Parameters | Reverts when... |
-|---|---|---|
-| `NotOwnerOfPosition` | `bytes32 positionId` | Caller does not own the position |
-| `PositionAlreadyExists` | `bytes32 positionId` | Position ID collision on deposit |
-| `PositionNotFound` | `bytes32 positionId` | Position ID does not exist |
-| `PositionAlreadyClosed` | `bytes32 positionId` | Position was already withdrawn |
-| `PositionCurrentlyInRange` | `bytes32 positionId` | Attempt to route capital for an in-range position |
-| `PositionAlreadyRouted` | `bytes32 positionId` | Capital already deployed to yield |
-| `PositionNotRouted` | `bytes32 positionId` | No capital to recall |
-| `RoutingCooldownActive` | `bytes32 positionId, uint256 unlocksAt` | Position is rate-limited on routing |
-| `UnauthorizedRoutingCaller` | -- | Caller is not the authorized RSC |
-| `ZeroAmount` | -- | Zero-value deposit or action |
-| `CapitalInYield` | `bytes32 positionId` | Direct removeLiquidity blocked while capital in yield |
-
 ### YieldRouter
 
 | Error | Parameters | Reverts when... |
@@ -313,13 +367,14 @@ All amounts are in the underlying asset (USDC at 6 decimals). APY is in basis po
 
 | Contract | Role | Functions |
 |---|---|---|
-| `StableStreamHook` | Owner (`onlyOwner`) | `setReactiveContract`, `withdraw` admin |
-| `YieldRouter` | Owner (`onlyOwner`) | `registerSource`, `removeSource`, `emergencyWithdrawAll`, `setRiskProfile`, `setAuthorizedCaller`, `seedAPYSnapshot` |
-| `YieldRouter` | Authorized (`onlyAuthorized`) | `routeToYield`, `recallAllFromYield` |
-| `RangeMonitorRSC` | Owner (`onlyOwner`) | `setMaxCallbacksPerBlock`, `setPositionCooldownBlocks`, `transferOwnership`, `withdrawEth` |
-| `RangeMonitorRSC` | Reactive Network (`vmOnly`) | `react` |
-| Adapters | Owner (`onlyOwner`) | `setAuthorizedCaller`, `setMockAPY`, `setMaxCapacity` |
-| Adapters | Authorized (`onlyAuthorized`) | `deposit`, `withdraw`, `withdrawAll` |
+| `IdleCapitalYieldModule` | Owner | `setReactiveContract`, `setPositionCooldownBlocks`, `setMaxCallbacksPerBlock` |
+| `StableStreamHook` | Owner (inherited) | Overridden admin functions |
+| `YieldRouter` | Owner | `registerSource`, `removeSource`, `emergencyWithdrawAll`, `setRiskProfile`, `setAuthorizedCaller`, `seedAPYSnapshot` |
+| `YieldRouter` | Authorized | `routeToYield`, `recallAllFromYield` |
+| `RangeMonitorRSC` | Owner | `setMaxCallbacksPerBlock`, `setPositionCooldownBlocks`, `transferOwnership`, `withdrawEth` |
+| `RangeMonitorRSC` | Reactive Network | `react` |
+| Adapters | Owner | `setAuthorizedCaller`, `setMockAPY`, `setMaxCapacity` |
+| Adapters | Authorized | `deposit`, `withdraw`, `withdrawAll` |
 
 ---
 
@@ -328,14 +383,12 @@ All amounts are in the underlying asset (USDC at 6 decimals). APY is in basis po
 The hook address must have specific lower 14 bits set to declare its permission flags. The deploy script brute-forces a salt to find an address that matches:
 
 ```solidity
-// Required hook permissions (4 flags)
 uint160 constant HOOK_FLAGS =
     Hooks.AFTER_ADD_LIQUIDITY_FLAG |      // 1 << 10 = 0x0400
     Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |  // 1 << 9  = 0x0200
     Hooks.BEFORE_SWAP_FLAG |              // 1 << 7  = 0x0080
     Hooks.AFTER_SWAP_FLAG;                // 1 << 6  = 0x0040
 
-// Brute-force salt to match permission bits
 address foundryFactory = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 bytes32 salt;
 address hookAddress;
@@ -359,33 +412,39 @@ Foundry routes `new Contract{salt: s}()` through a deterministic factory at `0x4
 ```
 src/
 ├── core/
-│   ├── YieldRouter.sol              # Multi-source yield routing
+│   ├── IdleCapitalYieldModule.sol       # Reusable yield-routing base module
+│   ├── YieldRouter.sol                  # Multi-source yield routing
 │   ├── interfaces/
-│   │   └── IYieldSource.sol         # Yield adapter interface
+│   │   ├── IIdleCapitalYieldModule.sol  # Module interface for RSC
+│   │   └── IYieldSource.sol            # Yield adapter interface
 │   ├── adapters/
-│   │   ├── CompoundV3Adapter.sol    # Compound V3 Comet
-│   │   ├── AaveV3Adapter.sol        # Aave V3
-│   │   └── NativeStakeAdapter.sol   # ETH native staking
+│   │   ├── CompoundV3Adapter.sol        # Compound V3 Comet
+│   │   ├── AaveV3Adapter.sol            # Aave V3
+│   │   └── NativeStakeAdapter.sol       # ETH native staking
 │   ├── libraries/
-│   │   ├── APYVerifier.sol          # TWAP anomaly detection
-│   │   ├── DynamicFeeModule.sol     # Yield-ratio swap fees
-│   │   ├── RangeCalculator.sol      # Tick math and range detection
-│   │   ├── RiskEngine.sol           # Risk-weighted source scoring
-│   │   ├── TransientStorage.sol     # EIP-1153 TSTORE/TLOAD wrapper
-│   │   └── YieldAccounting.sol      # Per-position yield tracking
+│   │   ├── APYVerifier.sol              # TWAP anomaly detection
+│   │   ├── DynamicFeeModule.sol         # Yield-ratio swap fees
+│   │   ├── RangeCalculator.sol          # Tick math and range detection
+│   │   ├── RiskEngine.sol               # Risk-weighted source scoring
+│   │   ├── TransientStorage.sol         # EIP-1153 TSTORE/TLOAD wrapper
+│   │   └── YieldAccounting.sol          # Per-position yield tracking
 │   └── reactive/
-│       └── RangeMonitorRSC.sol      # Reactive Network automation
+│       └── RangeMonitorRSC.sol          # Reactive Network automation
 
-app/                                  # Application-layer contracts
-├── StableStreamHook.sol             # Hook implementation
-├── StableStreamNFT.sol              # ERC-721 position receipt
+app/                                      # Application-layer contracts
+├── StableStreamHook.sol                 # Reference hook implementation
+├── StableStreamNFT.sol                  # ERC-721 position receipt
 └── script/
-    ├── Deploy.s.sol                 # Full protocol deployment
-    ├── DeployRSC.s.sol              # RSC deployment
-    └── InitPool.s.sol               # Pool initialisation
+    ├── Deploy.s.sol                     # Full protocol deployment
+    ├── DeployRSC.s.sol                  # RSC deployment
+    └── InitPool.s.sol                   # Pool initialisation
 
-test/                                # 150 tests across 10 suites
-frontend/                            # Next.js interface
+test/                                    # 161 tests across 11 suites
+  core/
+    MinimalHook.t.sol                    # Module reusability proof
+frontend/                                # Next.js interface
+docs/
+  INTEGRATION_GUIDE.md                   # Module integration walkthrough
 ```
 
 ---
@@ -414,12 +473,12 @@ Actual costs depend on pool state and yield source conditions.
 forge test
 ```
 
-150 tests across 10 suites:
+161 tests across 11 suites:
 
 ```
 forge test --match-contract SecurityEdgeCases -vvv
 forge test --match-contract Integration -vvv
-forge test --match-contract DynamicFee -vvv
+forge test --match-contract MinimalHookTest -vvv
 ```
 
 ### Test suites
@@ -430,6 +489,7 @@ forge test --match-contract DynamicFee -vvv
 | `CompoundV3AdapterTest` | 26 | Deposit, withdraw, APY, fuzz |
 | `DynamicFeeTest` | 8 | Fee scaling, boundary checks |
 | `IntegrationTest` | 12 | Full lifecycle, multi-stream |
+| `MinimalHookTest` | 11 | Module reusability proof |
 | `MultiTokenTest` | 9 | Token routing, whitelist |
 | `NFTPositionsTest` | 16 | Mint, burn, approvals |
 | `RiskEngineTest` | 10 | Risk scoring, thresholds |

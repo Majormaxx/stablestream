@@ -6,20 +6,25 @@ import "reactive-lib/abstract-base/AbstractPausableReactive.sol";
 
 /// @title RangeMonitorRSC
 /// @notice Reactive Smart Contract deployed on the Reactive Network (Lasna testnet).
-///         Monitors StableStreamHook events on Unichain Sepolia and autonomously
+///         Monitors any IIdleCapitalYieldModule hook's events and autonomously
 ///         triggers yield routing / JIT recall callbacks.
 ///
-/// @dev    Deployment chain: Reactive Network Lasna (chain ID 5318007)
+/// @dev    The event topic constants in this contract match the event signatures
+///         defined in IIdleCapitalYieldModule.  Any hook that implements that
+///         interface — not just StableStreamHook — can be monitored by deploying
+///         a RangeMonitorRSC instance pointed at its address.
+///
+///         Deployment chain: Reactive Network Lasna (chain ID 5318007)
 ///         Origin chain:     Unichain Sepolia (chain ID 1301)
 ///         Destination:      Unichain Sepolia (chain ID 1301)
 ///
-///         Subscribed events
+///         Subscribed events (from IIdleCapitalYieldModule)
 ///         ─────────────────
 ///         1. PositionLeftRange(bytes32 positionId, int24 newTick)
-///            → Calls routeToYield(positionId) on StableStreamHook
+///            → Calls routeToYield(positionId) on the hook
 ///
 ///         2. PositionEnteredRange(bytes32 positionId, int24 currentTick)
-///            → Calls recallFromYield(positionId) on StableStreamHook
+///            → Calls recallFromYield(positionId) on the hook
 ///
 ///         3. CapitalRouted(bytes32 positionId, address yieldSource, uint256 amount)
 ///            → Observational only — no callback
@@ -32,6 +37,7 @@ import "reactive-lib/abstract-base/AbstractPausableReactive.sol";
 ///         because capital must be back in the pool before the next swap.
 ///
 /// @custom:integration Reactive Network — https://dev.reactive.network/
+/// @custom:interface IIdleCapitalYieldModule — see src/core/interfaces/IIdleCapitalYieldModule.sol
 contract RangeMonitorRSC is IReactive, AbstractPausableReactive {
 
     // -------------------------------------------------------------------------
