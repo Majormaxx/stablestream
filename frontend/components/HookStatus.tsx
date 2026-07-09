@@ -2,47 +2,28 @@
 
 import { useReadContracts } from "wagmi";
 import { CONTRACTS, StableStreamHookABI, YieldRouterABI } from "@/lib/contracts";
-
-function RowSkeleton() {
-  return (
-    <div style={{
-      display: "flex", justifyContent: "space-between", alignItems: "center",
-      padding: "12px 0", borderBottom: "1px solid rgba(0,102,255,0.1)",
-    }}>
-      <span style={{
-        display: "inline-block", width: "6rem", height: "0.9rem", borderRadius: 4,
-        backgroundImage: "linear-gradient(90deg, rgba(0,102,255,0.12) 25%, rgba(0,170,255,0.18) 50%, rgba(0,102,255,0.12) 75%)",
-        backgroundSize: "200% 100%",
-        animation: "shimmer 1.5s infinite",
-      }} aria-hidden="true" />
-      <span style={{
-        display: "inline-block", width: "10rem", height: "0.9rem", borderRadius: 4,
-        backgroundImage: "linear-gradient(90deg, rgba(0,102,255,0.12) 25%, rgba(0,170,255,0.18) 50%, rgba(0,102,255,0.12) 75%)",
-        backgroundSize: "200% 100%",
-        animation: "shimmer 1.5s infinite",
-      }} aria-hidden="true" />
-    </div>
-  );
-}
+import { Card } from "@/components/ui/Card";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 function Row({ label, value, mono, isError }: {
   label: string; value: string; mono?: boolean; isError?: boolean;
 }) {
   return (
-    <div style={{
-      display: "flex", justifyContent: "space-between", alignItems: "center",
-      padding: "12px 0", borderBottom: "1px solid rgba(0,102,255,0.1)",
-      flexWrap: "wrap", gap: 8,
-    }}>
-      <span style={{ color: "#4A6FA5", fontSize: "0.85rem" }}>{label}</span>
-      <span style={{
-        fontFamily: mono ? "monospace" : "inherit",
-        fontSize: "0.82rem",
-        color: isError ? "#FF6B6B" : "#F0F4FF",
-        fontWeight: 600,
-      }}>
+    <div className="flex justify-between items-center flex-wrap gap-2 py-3 border-b border-brand-500/10">
+      <span className="text-text-muted text-[0.85rem]">{label}</span>
+      <span className={`text-[0.82rem] font-semibold ${mono ? "font-mono" : ""} ${isError ? "text-error-400" : "text-text-primary"}`}>
         {value}
       </span>
+    </div>
+  );
+}
+
+function RowSkeleton() {
+  return (
+    <div className="flex justify-between items-center py-3 border-b border-brand-500/10">
+      <Skeleton width="6rem" height="0.9rem" />
+      <Skeleton width="10rem" height="0.9rem" />
     </div>
   );
 }
@@ -57,11 +38,9 @@ function safeAddr(val: unknown): string {
 export function HookStatus() {
   const { data, isLoading, isError } = useReadContracts({
     contracts: [
-      // Hook reads
       { address: CONTRACTS.HOOK, abi: StableStreamHookABI, functionName: "reactiveContract" },
       { address: CONTRACTS.HOOK, abi: StableStreamHookABI, functionName: "nft" },
       { address: CONTRACTS.HOOK, abi: StableStreamHookABI, functionName: "owner" },
-      // YieldRouter reads
       { address: CONTRACTS.YIELD_ROUTER, abi: YieldRouterABI, functionName: "owner" },
       { address: CONTRACTS.YIELD_ROUTER, abi: YieldRouterABI, functionName: "sourceCount" },
       { address: CONTRACTS.YIELD_ROUTER, abi: YieldRouterABI, functionName: "authorizedCaller" },
@@ -84,37 +63,28 @@ export function HookStatus() {
   const authCaller  = authCallerR?.status === "success" ? safeAddr(authCallerR.result) : "—";
 
   return (
-    <section aria-labelledby="hook-status-heading" style={{ padding: "64px 24px" }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <p style={{ color: "#00AAFF", fontWeight: 600, fontSize: "0.75rem", letterSpacing: "2px", textAlign: "center", marginBottom: 8 }}>
+    <section aria-labelledby="hook-status-heading" className="px-6 py-16">
+      <div className="max-w-[900px] mx-auto">
+        <p className="text-brand-400 font-semibold text-[0.75rem] tracking-[2px] text-center mb-2">
           LIVE ON-CHAIN STATE · REFRESHES EVERY 30s
         </p>
         <h2
           id="hook-status-heading"
-          style={{ textAlign: "center", fontWeight: 900, fontSize: "clamp(1.6rem,3vw,2.4rem)", letterSpacing: "-1px", marginBottom: 32 }}
+          className="text-center font-black text-[clamp(1.6rem,3vw,2.4rem)] -tracking-[1px] mb-8"
         >
           Hook & Router Status
         </h2>
 
         {isError && (
-          <div role="alert" style={{
-            border: "1px solid rgba(255,107,107,0.3)",
-            background: "rgba(255,107,107,0.06)",
-            borderRadius: 12, padding: "14px 20px",
-            color: "#FF6B6B", fontSize: "0.85rem", textAlign: "center", marginBottom: 24,
-          }}>
-            Failed to load on-chain data. Check your connection or try refreshing.
+          <div className="mb-6">
+            <ErrorState message="Failed to load on-chain data. Check your connection or try refreshing." />
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 20 }}>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(340px,1fr))] gap-5">
           {/* Hook card */}
-          <div
-            role="region"
-            aria-label="StableStreamHook contract status"
-            style={{ border: "1px solid rgba(0,102,255,0.18)", borderRadius: 16, padding: "24px 28px", background: "rgba(8,15,30,0.8)" }}
-          >
-            <div style={{ fontWeight: 700, fontSize: "0.9rem", color: "#00AAFF", marginBottom: 16, letterSpacing: "0.5px" }}>
+          <Card role="region" aria-label="StableStreamHook contract status">
+            <div className="font-bold text-[0.9rem] text-brand-400 mb-4 tracking-[0.5px]">
               StableStreamHook
             </div>
             {isLoading ? (
@@ -125,46 +95,38 @@ export function HookStatus() {
                 <Row label="Owner"            value={safeAddr(hookOwnerR?.result)} mono isError={hookOwnerR?.status === "failure"} />
                 <Row label="NFT Contract"     value={safeAddr(nftR?.result)}       mono isError={nftR?.status === "failure"} />
                 <Row label="Reactive (RSC)" value={rscLabel} mono={rscLive} isError={!rscLive} />
-                {/* RSC detail block */}
-                <div style={{
-                  padding: "10px 12px",
-                  background: rscLive ? "rgba(0,200,100,0.05)" : "rgba(255,80,80,0.05)",
-                  border: `1px solid ${rscLive ? "rgba(0,200,100,0.2)" : "rgba(255,80,80,0.15)"}`,
-                  borderRadius: 10,
-                  marginTop: 4,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 6,
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: "0.75rem", color: rscLive ? "#00C864" : "#FF8080", fontWeight: 700 }}>
+                <div
+                  className="mt-1 p-[10px_12px] rounded-[10px] flex flex-col gap-[6px]"
+                  style={{
+                    background: rscLive ? "rgba(0,200,100,0.05)" : "rgba(255,80,80,0.05)",
+                    border: `1px solid ${rscLive ? "rgba(0,200,100,0.2)" : "rgba(255,80,80,0.15)"}`,
+                  }}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className={`text-[0.75rem] font-bold ${rscLive ? "text-green-400" : "text-[#FF8080]"}`}>
                       {rscLive ? "● Connected" : "○ Not set"}
                     </span>
                     {rscLive && (
-                      <span style={{
-                        fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.5px",
-                        background: "rgba(0,170,255,0.12)", border: "1px solid rgba(0,170,255,0.25)",
-                        borderRadius: 6, padding: "2px 8px", color: "#00AAFF",
-                      }}>
+                      <span className="text-[0.68rem] font-bold tracking-[0.5px] bg-brand-400/12 border border-brand-400/25 rounded-[6px] px-2 py-[2px] text-brand-400">
                         Lasna · Chain 5318007
                       </span>
                     )}
                   </div>
                   {rscLive && (
                     <>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "#4A6FA5" }}>
+                      <div className="flex justify-between text-[0.72rem] text-text-muted">
                         <span>Monitoring chain</span>
-                        <span style={{ color: "#F0F4FF", fontWeight: 600 }}>Unichain Sepolia (1301)</span>
+                        <span className="text-text-primary font-semibold">Unichain Sepolia (1301)</span>
                       </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "#4A6FA5" }}>
+                      <div className="flex justify-between text-[0.72rem] text-text-muted">
                         <span>Callback target</span>
-                        <span style={{ color: "#F0F4FF", fontWeight: 600 }}>Unichain Sepolia (1301)</span>
+                        <span className="text-text-primary font-semibold">Unichain Sepolia (1301)</span>
                       </div>
                       <a
                         href={`${LASNA_EXPLORER}/address/${RSC_ADDR}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ fontSize: "0.72rem", color: "#00AAFF", marginTop: 2 }}
+                        className="text-[0.72rem] text-brand-400 mt-0.5"
                         aria-label="View RSC on Lasna explorer (opens in new tab)"
                       >
                         View on Lasna explorer ↗
@@ -174,15 +136,11 @@ export function HookStatus() {
                 </div>
               </>
             )}
-          </div>
+          </Card>
 
           {/* Router card */}
-          <div
-            role="region"
-            aria-label="YieldRouter contract status"
-            style={{ border: "1px solid rgba(0,102,255,0.18)", borderRadius: 16, padding: "24px 28px", background: "rgba(8,15,30,0.8)" }}
-          >
-            <div style={{ fontWeight: 700, fontSize: "0.9rem", color: "#00AAFF", marginBottom: 16, letterSpacing: "0.5px" }}>
+          <Card role="region" aria-label="YieldRouter contract status">
+            <div className="font-bold text-[0.9rem] text-brand-400 mb-4 tracking-[0.5px]">
               YieldRouter
             </div>
             {isLoading ? (
@@ -196,7 +154,7 @@ export function HookStatus() {
                 <Row label="Active Adapter"  value="Compound V3" />
               </>
             )}
-          </div>
+          </Card>
         </div>
       </div>
     </section>

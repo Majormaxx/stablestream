@@ -14,7 +14,6 @@ import { CONTRACTS, StableStreamHookABI } from "@/lib/contracts";
 const HOOK_ABI = StableStreamHookABI as Abi;
 import { USDC_DECIMALS } from "@/lib/poolKey";
 
-/* ── Types ──────────────────────────────────────────────── */
 interface YieldState {
   depositedPrincipal: bigint;
   harvestedYield: bigint;
@@ -57,19 +56,14 @@ function truncate(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-/* ── Skeleton ────────────────────────────────────────────── */
 function CardSkeleton() {
   return (
-    <div style={{
-      height: 180, borderRadius: 14,
-      backgroundImage: "linear-gradient(90deg, rgba(0,102,255,0.06) 25%, rgba(0,170,255,0.1) 50%, rgba(0,102,255,0.06) 75%)",
-      backgroundSize: "200% 100%",
-      animation: "shimmer 1.5s infinite",
-    }} aria-busy="true" aria-label="Loading position" />
+    <div aria-busy="true" aria-label="Loading position"
+      className="h-[180px] rounded-[14px] bg-gradient-to-r from-brand-500/6 via-brand-400/10 to-brand-500/6 bg-[length:200%_100%] animate-[shimmer_1.5s_infinite]"
+    />
   );
 }
 
-/* ── Single position card ────────────────────────────────── */
 function PositionCard({
   positionId,
   pos,
@@ -90,7 +84,6 @@ function PositionCard({
 
   const { isSuccess: withdrawConfirmed } = useWaitForTransactionReceipt({ hash: withdrawHash });
 
-  /* ── Confirm withdrawal ─────────────────────────────── */
   useEffect(() => {
     if (withdrawConfirmed && withdrawing) {
       setWithdrawn(true);
@@ -123,33 +116,26 @@ function PositionCard({
   const isPending  = withdrawPending || withdrawing;
 
   return (
-    <div style={{
-      background: "rgba(8,15,30,0.85)",
-      border: "1px solid rgba(0,102,255,0.18)",
-      borderRadius: 14, padding: "20px",
-      display: "flex", flexDirection: "column", gap: 14,
-    }}>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+    <div className="bg-bg-card/85 border border-brand-500/18 rounded-[14px] p-5 flex flex-col gap-[14px]">
+      <div className="flex justify-between items-start">
         <div>
-          <div style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "#4A6FA5", marginBottom: 4 }}>
+          <div className="font-mono text-[0.72rem] text-text-muted mb-1">
             {truncate(positionId)}
           </div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: status.color, display: "inline-block" }} />
-            <span style={{ fontWeight: 700, fontSize: "0.85rem", color: status.color }}>{status.label}</span>
+          <div className="inline-flex items-center gap-[6px]">
+            <span className="w-[7px] h-[7px] rounded-full inline-block" style={{ background: status.color }} />
+            <span className="font-bold text-[0.85rem]" style={{ color: status.color }}>{status.label}</span>
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: "0.72rem", color: "#4A6FA5", marginBottom: 2 }}>Ticks</div>
-          <div style={{ fontWeight: 700, fontSize: "0.9rem", fontFamily: "monospace", color: "#F0F4FF" }}>
+        <div className="text-right">
+          <div className="text-[0.72rem] text-text-muted mb-0.5">Ticks</div>
+          <div className="font-bold text-[0.9rem] font-mono text-text-primary">
             {pos.tickLower} → {pos.tickUpper}
           </div>
         </div>
       </div>
 
-      {/* Metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+      <div className="grid grid-cols-3 gap-2">
         {[
           {
             label: "LIQUIDITY",
@@ -171,62 +157,55 @@ function PositionCard({
             color: "#00C864",
           },
         ].map((m) => (
-          <div key={m.label} style={{ background: "rgba(0,102,255,0.05)", borderRadius: 10, padding: "10px 10px" }}>
-            <div style={{ fontSize: "0.65rem", color: "#4A6FA5", marginBottom: 4, letterSpacing: "0.5px" }}>{m.label}</div>
-            <div style={{ fontWeight: 800, fontSize: "0.82rem", color: m.color, fontFamily: "monospace", wordBreak: "break-all" }}>
+          <div key={m.label} className="bg-brand-500/5 rounded-[10px] p-[10px]">
+            <div className="text-[0.65rem] text-text-muted mb-1 tracking-[0.5px]">{m.label}</div>
+            <div className="font-extrabold text-[0.82rem] font-mono break-all" style={{ color: m.color }}>
               {m.value}
             </div>
           </div>
         ))}
       </div>
 
-      {/* Yield source */}
       {pos.activeYieldSource !== ZERO_ADDR && (
-        <div style={{ fontSize: "0.74rem", color: "#4A6FA5" }}>
+        <div className="text-[0.74rem] text-text-muted">
           Routing to:{" "}
           <a href={`https://sepolia.uniscan.xyz/address/${pos.activeYieldSource}`}
             target="_blank" rel="noopener noreferrer"
-            style={{ color: "#00AAFF", textDecoration: "none", fontFamily: "monospace" }}
+            className="text-brand-400 no-underline font-mono"
             aria-label="View yield source on Uniscan (opens in new tab)">
             {truncate(pos.activeYieldSource)} ↗
           </a>
         </div>
       )}
 
-      {/* Error */}
       {errorMsg && (
-        <div role="alert" style={{ fontSize: "0.74rem", color: "#FF5050", background: "rgba(255,80,80,0.06)", borderRadius: 8, padding: "8px 12px", wordBreak: "break-word" }}>
+        <div role="alert" className="text-[0.74rem] text-error-500 bg-error-500/6 rounded-[8px] px-3 py-2 break-words">
           {errorMsg}
         </div>
       )}
 
-      {/* Pending tx link */}
       {withdrawHash && !withdrawConfirmed && (
         <a href={`https://sepolia.uniscan.xyz/tx/${withdrawHash}`} target="_blank" rel="noopener noreferrer"
-          style={{ fontSize: "0.73rem", color: "#00AAFF", textDecoration: "none" }}
+          className="text-[0.73rem] text-brand-400 no-underline"
           aria-label="View withdraw transaction on Uniscan (opens in new tab)">
           Withdraw tx pending — view on Uniscan ↗
         </a>
       )}
 
-      {/* Success message */}
       {withdrawn && !errorMsg && (
-        <div style={{ fontSize: "0.8rem", color: "#00C864", fontWeight: 600 }}>
+        <div className="text-[0.8rem] text-green-400 font-semibold">
           Withdrawn successfully ✓
         </div>
       )}
 
-      {/* Withdraw button */}
       {!pos.closed && !withdrawn && (
         <button type="button" disabled={isPending} onClick={handleWithdraw} aria-busy={isPending}
+          className="rounded-[10px] px-4 py-[10px] font-bold text-[0.85rem] transition-all duration-200"
           style={{
             background: "rgba(255,80,80,0.1)",
             border: "1px solid rgba(255,80,80,0.3)",
-            borderRadius: 10, padding: "10px 16px",
             color: isPending ? "#884444" : "#FF8080",
-            fontWeight: 700, fontSize: "0.85rem",
             cursor: isPending ? "not-allowed" : "pointer",
-            transition: "all 0.2s",
           }}>
           {isPending ? "Withdrawing…" : "Withdraw Position"}
         </button>
@@ -235,7 +214,6 @@ function PositionCard({
   );
 }
 
-/* ── Main component ──────────────────────────────────────── */
 export function MyPositions({ refreshKey }: { refreshKey?: number }) {
   const { address } = useAccount();
   const [localKey, setLocalKey] = useState(0);
@@ -249,7 +227,6 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
     query: { enabled: !!address, refetchInterval: 20_000, refetchIntervalInBackground: false },
   });
 
-  /* Re-fetch when parent signals a new deposit */
   useEffect(() => {
     if (refreshKey !== undefined && refreshKey > 0) refetch();
   }, [refreshKey, refetch]);
@@ -260,7 +237,6 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
   const totalPages = Math.max(1, Math.ceil(ids.length / PAGE_SIZE));
   const pagedIds = ids.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  /* Single multicall for all visible positions — one RPC round-trip per interval */
   const { data: positionsData, isLoading: posLoading } = useReadContracts({
     contracts: pagedIds.map((id) => ({
       address: CONTRACTS.HOOK as `0x${string}`,
@@ -276,16 +252,11 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
   });
 
   return (
-    <div style={{
-      background: "linear-gradient(135deg, rgba(8,15,30,0.95), rgba(5,10,20,0.95))",
-      border: "1px solid rgba(0,102,255,0.2)",
-      borderRadius: 20, padding: "32px 28px",
-      display: "flex", flexDirection: "column", gap: 24,
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+    <div className="bg-gradient-to-br from-bg-card/95 to-bg-deep/95 border border-brand-500/20 rounded-[20px] p-[32px_28px] flex flex-col gap-6">
+      <div className="flex justify-between items-start gap-3">
         <div>
-          <h3 style={{ fontWeight: 800, fontSize: "1.15rem", marginBottom: 4 }}>My Positions</h3>
-          <p style={{ color: "#4A6FA5", fontSize: "0.82rem" }}>
+          <h3 className="font-extrabold text-[1.15rem] mb-1">My Positions</h3>
+          <p className="text-text-muted text-[0.82rem]">
             {isLoading
               ? "Loading…"
               : ids.length === 0
@@ -294,34 +265,32 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
           </p>
         </div>
         <button type="button" onClick={handleRefresh} disabled={isLoading}
+          className="rounded-[10px] px-[14px] py-2 font-semibold text-[0.78rem] shrink-0"
           style={{
-            background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,102,255,0.25)",
-            borderRadius: 10, padding: "8px 14px", color: "#00AAFF",
-            fontWeight: 600, fontSize: "0.78rem",
-            cursor: isLoading ? "not-allowed" : "pointer", flexShrink: 0,
+            background: "rgba(0,102,255,0.08)",
+            border: "1px solid rgba(0,102,255,0.25)",
+            color: "#00AAFF",
+            cursor: isLoading ? "not-allowed" : "pointer",
           }}>
           Refresh
         </button>
       </div>
 
-      {/* Error */}
       {isError && (
-        <div role="alert" style={{ background: "rgba(255,80,80,0.06)", border: "1px solid rgba(255,80,80,0.2)", borderRadius: 12, padding: "14px 18px", color: "#FF8080", fontSize: "0.82rem" }}>
+        <div role="alert" className="bg-error-500/6 border border-error-500/20 rounded-[12px] px-[18px] py-[14px] text-[#FF8080] text-[0.82rem]">
           Failed to load positions. Check your connection or click Refresh.
         </div>
       )}
 
-      {/* Loading skeletons */}
       {isLoading && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="flex flex-col gap-3">
           <CardSkeleton />
           <CardSkeleton />
         </div>
       )}
 
-      {/* Positions */}
       {!isLoading && pagedIds.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="flex flex-col gap-3">
           {pagedIds.map((id, i) => (
             <PositionCard
               key={`${id}-${localKey}-${refreshKey ?? 0}`}
@@ -332,16 +301,18 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
             />
           ))}
           {totalPages > 1 && (
-            <div style={{ display: "flex", justifyContent: "center", gap: 10, paddingTop: 4 }}>
+            <div className="flex justify-center gap-[10px] pt-1">
               <button type="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
-                style={{ background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,102,255,0.25)", borderRadius: 8, padding: "6px 14px", color: "#00AAFF", fontWeight: 600, fontSize: "0.78rem", cursor: page === 0 ? "not-allowed" : "pointer" }}>
+                className="rounded-[8px] px-[14px] py-[6px] font-semibold text-[0.78rem]"
+                style={{ background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,102,255,0.25)", color: "#00AAFF", cursor: page === 0 ? "not-allowed" : "pointer" }}>
                 ← Prev
               </button>
-              <span style={{ color: "#4A6FA5", fontSize: "0.8rem", alignSelf: "center" }}>
+              <span className="text-text-muted text-[0.8rem] self-center">
                 {page + 1} / {totalPages}
               </span>
               <button type="button" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
-                style={{ background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,102,255,0.25)", borderRadius: 8, padding: "6px 14px", color: "#00AAFF", fontWeight: 600, fontSize: "0.78rem", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer" }}>
+                className="rounded-[8px] px-[14px] py-[6px] font-semibold text-[0.78rem]"
+                style={{ background: "rgba(0,102,255,0.08)", border: "1px solid rgba(0,102,255,0.25)", color: "#00AAFF", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer" }}>
                 Next →
               </button>
             </div>
@@ -349,11 +320,10 @@ export function MyPositions({ refreshKey }: { refreshKey?: number }) {
         </div>
       )}
 
-      {/* Empty state */}
       {!isLoading && !isError && ids.length === 0 && (
-        <div style={{ textAlign: "center", padding: "32px 0", color: "#4A6FA5" }}>
-          <div style={{ fontSize: "2.5rem", marginBottom: 12, opacity: 0.4 }}>◎</div>
-          <p style={{ fontSize: "0.875rem" }}>Your positions will appear here after your first deposit.</p>
+        <div className="text-center py-8 text-text-muted">
+          <div className="text-[2.5rem] mb-3 opacity-40">◎</div>
+          <p className="text-[0.875rem]">Your positions will appear here after your first deposit.</p>
         </div>
       )}
     </div>

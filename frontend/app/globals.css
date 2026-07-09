@@ -1,15 +1,18 @@
 @import "tailwindcss";
 
-:root {
-  --bg-deep:      #050A14;
-  --bg-card:      #080F1E;
-  --bg-border:    #0D1F3C;
-  --blue-500:     #0066FF;
-  --blue-400:     #00AAFF;
-  --cyan-400:     #00D4FF;
-  --gold-400:     #FFB800;
-  --text-primary: #F0F4FF;
-  --text-muted:   #4A6FA5;
+@theme {
+  --color-bg-deep: #050A14;
+  --color-bg-card: #080F1E;
+  --color-bg-border: #0D1F3C;
+  --color-brand-500: #0066FF;
+  --color-brand-400: #00AAFF;
+  --color-cyan-400: #00D4FF;
+  --color-gold-400: #FFB800;
+  --color-green-400: #00C864;
+  --color-error-400: #FF6B6B;
+  --color-error-500: #FF5050;
+  --color-text-primary: #F0F4FF;
+  --color-text-muted: #4A6FA5;
 }
 
 * { box-sizing: border-box; }
@@ -17,8 +20,8 @@
 html { scroll-behavior: smooth; }
 
 body {
-  background-color: var(--bg-deep);
-  color: var(--text-primary);
+  background-color: var(--color-bg-deep);
+  color: var(--color-text-primary);
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -30,7 +33,6 @@ body {
   border-radius: 4px;
 }
 
-/* Remove outline for mouse users only */
 :focus:not(:focus-visible) {
   outline: none;
 }
@@ -80,7 +82,6 @@ body {
   50%       { opacity: 1; }
 }
 
-/* Skeleton shimmer used in components */
 @keyframes skeletonShimmer {
   0%   { background-position: -200% 0; }
   100% { background-position: 200% 0; }
@@ -112,6 +113,17 @@ body {
 .border-glow {
   border: 1px solid rgba(0, 102, 255, 0.2);
   background: linear-gradient(135deg, rgba(8,15,30,0.9), rgba(5,10,20,0.9));
+}
+
+/* ── Fade-up on scroll (applied by useInView hook) ──────── */
+.fade-in-on-scroll {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+}
+.fade-in-on-scroll.visible {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* ── Reduce motion — respect user preferences ───────────── */
