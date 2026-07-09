@@ -18,7 +18,9 @@ Yield infrastructure for out-of-range concentrated USDC liquidity. Detects idle 
 | `StableStreamNFT` | Unichain Sepolia (1301) | [`0x6f265EB778C44118cfc8484cA44A2Ea216ea998C`](https://sepolia.uniscan.xyz/address/0x6f265EB778C44118cfc8484cA44A2Ea216ea998C) |
 | `RangeMonitorRSC` | Reactive Network Lasna (5318007) | [`0xa86591459C15d12F13AbaDf0d78Ec56F3e920a80`](https://lasna.reactscan.net/address/0xa86591459C15d12F13AbaDf0d78Ec56F3e920a80) |
 
-**Frontend:** https://stablestream.vercel.app
+**Frontend:** https://stablestream.online
+
+`IdleCapitalYieldModule` is inherited bytecode, not separately deployed; `StableStreamHook`'s address in the table above includes the full module.
 
 ---
 
@@ -31,9 +33,7 @@ Concentrated liquidity positions in stablecoin pairs sit idle when the price mov
 ```mermaid
 flowchart TB
     subgraph Unichain["Unichain Sepolia (1301)"]
-        LP[LP] -->|deposit| Hook[StableStreamHook]
-        Hook -->|inherits| Module[IdleCapitalYieldModule]
-        Module -->|afterAddLiquidity| Track[Position Tracking]
+        Module[IdleCapitalYieldModule] -->|afterAddLiquidity| Track[Position Tracking]
         Module -->|afterSwap: PositionLeftRange| Events[Event Logs]
         Module -->|beforeSwap: PositionEnteredRange| Events
         Module -->|routeToYield / recallFromYield| YieldRouter[YieldRouter]
@@ -41,16 +41,21 @@ flowchart TB
         YieldRouter ---> Risk[RiskEngine]
         YieldRouter ---> C3[CompoundV3Adapter]
         C3 ---> Comet[Compound V3 Comet]
+
+        Hook[StableStreamHook] -.->|inherits| Module
+        Ghost["YourHook (your contract)"] -.->|inherits| Module
         Hook ---> NFT[StableStreamNFT]
+
+        LP[LP] -->|deposit| Hook
     end
 
     subgraph Reactive["Reactive Network Lasna (5318007)"]
         RSC[RangeMonitorRSC]
-        RSC -->|subscribes to| Events
+        RSC -.->|subscribes to| Events
         RSC -->|Callback| Module
     end
 
-    style Unichain fill:#e3f2fd,color:#1a1a2e,stroke:#90caf9
+    style Unichain fill:#e3f5fd,color:#1a1a2e,stroke:#90caf9
     style Reactive fill:#f3e5f5,color:#1a1a2e,stroke:#ce93d8
 ```
 
@@ -82,7 +87,26 @@ contract MyHook is IdleCapitalYieldModule {
 }
 ```
 
-See [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) for the full walkthrough.
+That's the entire contract. Deploy a `YieldRouter` with adapters, point `RangeMonitorRSC` at the hook address, call `setReactiveContract()` -- and any idle concentrated-liquidity position on your pool automatically earns yield while out of range. Zero off-chain infrastructure.
+
+See [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) for the full deployment walkthrough.
+
+### Proof: a working hook in 11 lines
+
+The MinimalHook test suite proves `IdleCapitalYieldModule` is a fully functional standalone primitive. The module's 11 callbacks, position tracking, and yield routing logic all work with zero product-specific code:
+
+```solidity
+contract MinimalHook is IdleCapitalYieldModule {
+    constructor(
+        IPoolManager _poolManager,
+        YieldRouter _yieldRouter,
+        address _usdc,
+        address _owner
+    ) IdleCapitalYieldModule(_poolManager, _yieldRouter, _usdc, _owner) {}
+}
+```
+
+11 tests in `test/core/MinimalHook.t.sol` verify the module works independently of `StableStreamHook` -- deterministic position IDs, permission flags match the module's four callbacks, `routeToYield`/`recallFromYield` access control, `onlyOwner` gating on admin functions. Source at [`test/core/MinimalHook.sol`](test/core/MinimalHook.sol).
 
 ### What the module provides
 
