@@ -81,7 +81,7 @@ export function ProtocolStats() {
       label: "Compound V3 APY",
       value: apyStr,
       sub: "Live on-chain read · auto-routes idle capital",
-      accent: "linear-gradient(135deg, #FFB800, #FF8C00)",
+      accent: "linear-gradient(135deg, #E8A33D, #D4892A)",
       loading: isLoading,
       error: apyR?.status === "failure",
     },
@@ -98,7 +98,7 @@ export function ProtocolStats() {
       label: "Capital in Yield",
       value: yieldStr,
       sub: utilPct ? `${utilPct} utilisation · Compound V3` : "USDC earning via Compound V3",
-      accent: "linear-gradient(135deg, #00C864, #00AAFF)",
+      accent: "linear-gradient(135deg, #3EC9B0, #2DAF9A)",
       loading: isLoading,
       error: yieldCapR?.status === "failure",
     },
@@ -107,7 +107,7 @@ export function ProtocolStats() {
       label: "Dynamic Swap Fee",
       value: dynFeeStr,
       sub: "Scales with yield utilisation · DynamicFeeModule",
-      accent: "linear-gradient(135deg, #7c3aed, #06b6d4)",
+      accent: "linear-gradient(135deg, #8A9490, #E8A33D)",
       loading: isLoading,
       error: dynFeeR?.status === "failure",
     },
@@ -116,21 +116,21 @@ export function ProtocolStats() {
       label: "Yield Sources",
       value: srcStr,
       sub: "Registered adapters · pluggable",
-      accent: "linear-gradient(135deg, #0066FF, #00AAFF)",
+      accent: "linear-gradient(135deg, #E8A33D, #3EC9B0)",
       loading: isLoading,
       error: sourceR?.status === "failure",
     },
   ];
 
   return (
-    <section aria-labelledby="dashboard-heading" className="px-6 py-16">
+    <section aria-labelledby="dashboard-heading" className="px-6 py-16 border-t border-rail/60">
       <div className="max-w-[1100px] mx-auto">
-        <p className="text-brand-400 font-semibold text-[0.75rem] tracking-[2px] text-center mb-2">
+        <p className="text-signal font-mono text-[0.7rem] tracking-[2px] text-center mb-2">
           LIVE PROTOCOL DATA · UNICHAIN SEPOLIA · REFRESHES EVERY 20s
         </p>
         <h2
           id="dashboard-heading"
-          className="text-center font-black text-[clamp(1.6rem,3vw,2.4rem)] -tracking-[1px] mb-8"
+          className="text-center font-black text-[clamp(1.6rem,3vw,2.4rem)] -tracking-[1px] mb-8 font-display"
         >
           Protocol Dashboard
         </h2>
@@ -140,16 +140,16 @@ export function ProtocolStats() {
               <div
                 className="text-[2rem] font-black -tracking-[1px] min-h-[2.4rem]"
                 style={{
-                  background: s.error ? "none" : (s.accent ?? "linear-gradient(135deg, #00AAFF, #00D4FF)"),
+                  background: s.error ? "none" : (s.accent ?? "linear-gradient(135deg, #E8A33D, #D4892A)"),
                   WebkitBackgroundClip: s.error ? "unset" : "text",
-                  WebkitTextFillColor: s.error ? "#FF6B6B" : "transparent",
-                  color: s.error ? "#FF6B6B" : undefined,
+                  WebkitTextFillColor: s.error ? "var(--color-error, #D9634B)" : "transparent",
+                  color: s.error ? "var(--color-error, #D9634B)" : undefined,
                 }}
               >
                 <StatValue loading={s.loading} error={s.error} value={s.value} />
               </div>
-              <div className="font-bold text-[0.85rem] text-text-primary mt-1">{s.label}</div>
-              <div className={`text-[0.72rem] mt-0.5 ${s.error ? "text-error-400" : "text-text-muted"}`}>
+              <div className="font-bold text-[0.85rem] text-paper mt-1">{s.label}</div>
+              <div className={`text-[0.72rem] mt-0.5 ${s.error ? "text-error" : "text-slate"}`}>
                 {s.error ? "Failed to load" : s.sub}
               </div>
             </Card>

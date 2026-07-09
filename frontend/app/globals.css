@@ -1,6 +1,17 @@
 @import "tailwindcss";
 
 @theme {
+  /* ── Instrumentation palette (new) ─────────────────────── */
+  --color-ink: #0C0F0D;
+  --color-channel: #141A17;
+  --color-rail: #1E2621;
+  --color-signal: #E8A33D;
+  --color-current: #3EC9B0;
+  --color-paper: #EDEEE9;
+  --color-slate: #8A9490;
+  --color-error: #D9634B;
+
+  /* ── Legacy palette (keep during migration) ────────────── */
   --color-bg-deep: #050A14;
   --color-bg-card: #080F1E;
   --color-bg-border: #0D1F3C;
@@ -13,6 +24,11 @@
   --color-error-500: #FF5050;
   --color-text-primary: #F0F4FF;
   --color-text-muted: #4A6FA5;
+
+  /* ── Radius tokens ─────────────────────────────────────── */
+  --radius-control: 8px;
+  --radius-panel: 16px;
+  --radius-badge: 8px;
 }
 
 * { box-sizing: border-box; }
@@ -20,15 +36,15 @@
 html { scroll-behavior: smooth; }
 
 body {
-  background-color: var(--color-bg-deep);
-  color: var(--color-text-primary);
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  background-color: var(--color-ink);
+  color: var(--color-paper);
+  font-family: 'IBM Plex Sans', 'Inter', 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 /* ── Focus visible — keyboard navigation ────────────────── */
 :focus-visible {
-  outline: 2px solid #00AAFF;
+  outline: 2px solid var(--color-signal, #E8A33D);
   outline-offset: 3px;
   border-radius: 4px;
 }
@@ -42,27 +58,17 @@ body {
   position: absolute;
   top: -100%;
   left: 0;
-  background: #0066FF;
-  color: #fff;
+  background: var(--color-signal, #E8A33D);
+  color: #0C0F0D;
   padding: 10px 20px;
   font-weight: 700;
   z-index: 9999;
   text-decoration: none;
-  border-radius: 0 0 8px 0;
+  border-radius: 0 0 var(--radius-control, 8px) 0;
   transition: top 0.2s;
 }
 .skip-to-content:focus {
   top: 0;
-}
-
-/* ── Animated gradient text ─────────────────────────────── */
-.gradient-text {
-  background: linear-gradient(90deg, #0066FF, #00AAFF, #00D4FF, #FFB800);
-  background-size: 300% 100%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: shimmer 6s ease-in-out infinite;
 }
 
 /* ── Keyframes ──────────────────────────────────────────── */
@@ -96,7 +102,7 @@ body {
 
 .stream-pulse { animation: streamPulse 3s ease-in-out infinite; }
 
-/* ── Card hover ─────────────────────────────────────────── */
+/* ── Card hover (reserved for interactive cards only) ───── */
 .card-hover {
   transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
 }
@@ -109,10 +115,75 @@ body {
   box-shadow: 0 0 0 2px #00AAFF, 0 24px 64px rgba(0, 102, 255, 0.12);
 }
 
+/* ── Static card (no hover lift) ────────────────────────── */
+.card-static {
+  transition: border-color 0.25s ease;
+}
+
 /* ── Border glow card ───────────────────────────────────── */
 .border-glow {
   border: 1px solid rgba(0, 102, 255, 0.2);
   background: linear-gradient(135deg, rgba(8,15,30,0.9), rgba(5,10,20,0.9));
+}
+
+/* ── Instrument strip ───────────────────────────────────── */
+.instrument-strip {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.78rem;
+}
+.instrument-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 20px;
+  flex-shrink: 0;
+}
+.instrument-divider {
+  width: 1px;
+  height: 32px;
+  background-color: var(--color-rail, #1E2621);
+  flex-shrink: 0;
+}
+.instrument-value {
+  font-weight: 700;
+  color: var(--color-paper, #EDEEE9);
+}
+.instrument-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-slate, #8A9490);
+}
+
+/* ── Audience label rules ───────────────────────────────── */
+.audience-rule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto;
+  max-width: 360px;
+  padding: 16px 0 8px;
+}
+.audience-rule::before,
+.audience-rule::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background-color: var(--color-rail, #1E2621);
+}
+.audience-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--color-slate, #8A9490);
+  white-space: nowrap;
 }
 
 /* ── Fade-up on scroll (applied by useInView hook) ──────── */
@@ -124,6 +195,21 @@ body {
 .fade-in-on-scroll.visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ── Connected process line (for ArchitectureSteps) ─────── */
+.process-line {
+  position: relative;
+}
+.process-line::before {
+  content: "";
+  position: absolute;
+  left: 27px;
+  top: 28px;
+  bottom: 28px;
+  width: 1px;
+  background-color: var(--color-rail, #1E2621);
+  z-index: 0;
 }
 
 /* ── Reduce motion — respect user preferences ───────────── */

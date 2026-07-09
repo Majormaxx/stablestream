@@ -10,9 +10,9 @@ function Row({ label, value, mono, isError }: {
   label: string; value: string; mono?: boolean; isError?: boolean;
 }) {
   return (
-    <div className="flex justify-between items-center flex-wrap gap-2 py-3 border-b border-brand-500/10">
-      <span className="text-text-muted text-[0.85rem]">{label}</span>
-      <span className={`text-[0.82rem] font-semibold ${mono ? "font-mono" : ""} ${isError ? "text-error-400" : "text-text-primary"}`}>
+    <div className="flex justify-between items-center flex-wrap gap-2 py-3 border-b border-rail/40">
+      <span className="text-slate text-[0.85rem]">{label}</span>
+      <span className={`text-[0.82rem] font-semibold ${mono ? "font-mono" : ""} ${isError ? "text-error" : "text-paper"}`}>
         {value}
       </span>
     </div>
@@ -21,7 +21,7 @@ function Row({ label, value, mono, isError }: {
 
 function RowSkeleton() {
   return (
-    <div className="flex justify-between items-center py-3 border-b border-brand-500/10">
+    <div className="flex justify-between items-center py-3 border-b border-rail/40">
       <Skeleton width="6rem" height="0.9rem" />
       <Skeleton width="10rem" height="0.9rem" />
     </div>
@@ -65,12 +65,12 @@ export function HookStatus() {
   return (
     <section aria-labelledby="hook-status-heading" className="px-6 py-16">
       <div className="max-w-[900px] mx-auto">
-        <p className="text-brand-400 font-semibold text-[0.75rem] tracking-[2px] text-center mb-2">
+        <p className="text-signal font-mono text-[0.7rem] tracking-[2px] text-center mb-2">
           LIVE ON-CHAIN STATE · REFRESHES EVERY 30s
         </p>
         <h2
           id="hook-status-heading"
-          className="text-center font-black text-[clamp(1.6rem,3vw,2.4rem)] -tracking-[1px] mb-8"
+          className="text-center font-black text-[clamp(1.6rem,3vw,2.4rem)] -tracking-[1px] mb-8 font-display"
         >
           Hook & Router Status
         </h2>
@@ -84,7 +84,7 @@ export function HookStatus() {
         <div className="grid grid-cols-[repeat(auto-fit,minmax(340px,1fr))] gap-5">
           {/* Hook card */}
           <Card role="region" aria-label="StableStreamHook contract status">
-            <div className="font-bold text-[0.9rem] text-brand-400 mb-4 tracking-[0.5px]">
+            <div className="font-bold text-[0.9rem] text-signal mb-4 tracking-[0.5px]">
               StableStreamHook
             </div>
             {isLoading ? (
@@ -96,37 +96,37 @@ export function HookStatus() {
                 <Row label="NFT Contract"     value={safeAddr(nftR?.result)}       mono isError={nftR?.status === "failure"} />
                 <Row label="Reactive (RSC)" value={rscLabel} mono={rscLive} isError={!rscLive} />
                 <div
-                  className="mt-1 p-[10px_12px] rounded-[10px] flex flex-col gap-[6px]"
+                  className="mt-1 p-[10px_12px] rounded-[var(--radius-control)] flex flex-col gap-[6px]"
                   style={{
-                    background: rscLive ? "rgba(0,200,100,0.05)" : "rgba(255,80,80,0.05)",
-                    border: `1px solid ${rscLive ? "rgba(0,200,100,0.2)" : "rgba(255,80,80,0.15)"}`,
+                    background: rscLive ? "rgba(62,201,176,0.06)" : "rgba(217,99,75,0.06)",
+                    border: `1px solid ${rscLive ? "rgba(62,201,176,0.25)" : "rgba(217,99,75,0.2)"}`,
                   }}
                 >
                   <div className="flex justify-between items-center">
-                    <span className={`text-[0.75rem] font-bold ${rscLive ? "text-green-400" : "text-[#FF8080]"}`}>
+                    <span className={`text-[0.75rem] font-bold ${rscLive ? "text-current" : "text-error"}`}>
                       {rscLive ? "● Connected" : "○ Not set"}
                     </span>
                     {rscLive && (
-                      <span className="text-[0.68rem] font-bold tracking-[0.5px] bg-brand-400/12 border border-brand-400/25 rounded-[6px] px-2 py-[2px] text-brand-400">
+                      <span className="text-[0.68rem] font-bold tracking-[0.5px] bg-signal/10 border border-signal/20 rounded-[var(--radius-control)] px-2 py-[2px] text-signal">
                         Lasna · Chain 5318007
                       </span>
                     )}
                   </div>
                   {rscLive && (
                     <>
-                      <div className="flex justify-between text-[0.72rem] text-text-muted">
+                      <div className="flex justify-between text-[0.72rem] text-slate">
                         <span>Monitoring chain</span>
-                        <span className="text-text-primary font-semibold">Unichain Sepolia (1301)</span>
+                        <span className="text-paper font-semibold">Unichain Sepolia (1301)</span>
                       </div>
-                      <div className="flex justify-between text-[0.72rem] text-text-muted">
+                      <div className="flex justify-between text-[0.72rem] text-slate">
                         <span>Callback target</span>
-                        <span className="text-text-primary font-semibold">Unichain Sepolia (1301)</span>
+                        <span className="text-paper font-semibold">Unichain Sepolia (1301)</span>
                       </div>
                       <a
                         href={`${LASNA_EXPLORER}/address/${RSC_ADDR}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[0.72rem] text-brand-400 mt-0.5"
+                        className="text-[0.72rem] text-signal mt-0.5"
                         aria-label="View RSC on Lasna explorer (opens in new tab)"
                       >
                         View on Lasna explorer ↗
@@ -140,7 +140,7 @@ export function HookStatus() {
 
           {/* Router card */}
           <Card role="region" aria-label="YieldRouter contract status">
-            <div className="font-bold text-[0.9rem] text-brand-400 mb-4 tracking-[0.5px]">
+            <div className="font-bold text-[0.9rem] text-signal mb-4 tracking-[0.5px]">
               YieldRouter
             </div>
             {isLoading ? (

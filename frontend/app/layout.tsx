@@ -1,31 +1,45 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Space_Grotesk, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
-const inter = Inter({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-display",
   display: "swap",
 });
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://stablestream.xyz";
+const ibmPlexSans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "600", "700"],
+  variable: "--font-body",
+  display: "swap",
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "600", "700"],
+  variable: "--font-mono",
+  display: "swap",
+});
+
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://stablestream.online";
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
   title: {
-    default: "StableStream: Yield Without Limits",
+    default: "StableStream: Reactive Yield Automation for Uniswap v4",
     template: "%s | StableStream",
   },
   description:
-    "StableStream is a Uniswap v4 hook that autonomously routes out-of-range liquidity into yield sources. Maximising capital efficiency without lifting a finger.",
-  keywords: ["DeFi", "Uniswap v4", "liquidity", "yield", "hook", "Unichain", "StableStream", "concentrated liquidity", "AMM"],
+    "StableStream is a Uniswap v4 hook that autonomously routes out-of-range liquidity into yield sources — automated by Reactive Network, triggered by on-chain events. Same-block yield routing, zero off-chain infrastructure.",
+  keywords: ["DeFi", "Uniswap v4", "liquidity", "yield", "hook", "Unichain", "StableStream", "concentrated liquidity", "AMM", "Reactive Network", "automation"],
   authors: [{ name: "StableStream" }],
   creator: "StableStream",
   openGraph: {
-    title: "StableStream: Yield Without Limits",
+    title: "StableStream: Reactive Yield Automation",
     description:
-      "Autonomous yield routing for Uniswap v4 concentrated liquidity on Unichain Sepolia.",
+      "Reactive yield automation for Uniswap v4. Out-of-range USDC earns Compound yield — recalled just-in-time by a Reactive Network RSC.",
     url: BASE_URL,
     siteName: "StableStream",
     images: [
@@ -33,7 +47,7 @@ export const metadata: Metadata = {
         url: "/logo-wordmark.png",
         width: 1800,
         height: 360,
-        alt: "StableStream: Yield Without Limits",
+        alt: "StableStream: Reactive Yield Automation",
         type: "image/png",
       },
     ],
@@ -42,15 +56,15 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    site: "@StableStream",
-    creator: "@StableStream",
-    title: "StableStream: Yield Without Limits",
+    site: "@HQstablestream",
+    creator: "@HQstablestream",
+    title: "StableStream: Reactive Yield Automation",
     description:
-      "Autonomous yield routing for Uniswap v4 concentrated liquidity on Unichain Sepolia.",
+      "Reactive yield automation for Uniswap v4. Out-of-range USDC earns Compound yield — recalled just-in-time by a Reactive Network RSC.",
     images: [
       {
         url: "/logo-wordmark.png",
-        alt: "StableStream — Yield Without Limits",
+        alt: "StableStream — Reactive Yield Automation",
       },
     ],
   },
@@ -73,7 +87,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={`${spaceGrotesk.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}>
       <body className="antialiased">
         <Providers>{children}</Providers>
       </body>

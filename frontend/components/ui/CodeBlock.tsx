@@ -13,13 +13,13 @@ function tokenize(code: string): ReactNode[] {
 
     if (isComment) {
       tokens.push(
-        <span key="c" className="text-text-muted italic">{line}</span>
+        <span key="c" className="text-slate italic">{line}</span>
       );
     } else if (isImport) {
       const parts = line.split(/(["';])/g);
       tokens = parts.map((p, j) => {
-        if (p.startsWith(".") || p.startsWith("@")) return <span key={j} className="text-green-400">{p}</span>;
-        if (p === "import" || p === "from") return <span key={j} className="text-brand-400 font-semibold">{p}</span>;
+        if (p.startsWith(".") || p.startsWith("@")) return <span key={j} className="text-current">{p}</span>;
+        if (p === "import" || p === "from") return <span key={j} className="text-signal font-semibold">{p}</span>;
         return <span key={j}>{p}</span>;
       });
     } else {
@@ -32,12 +32,12 @@ function tokenize(code: string): ReactNode[] {
         if (kwMatch && kwMatch.index !== undefined) {
           const idx = kwMatch.index;
           if (idx > 0) { tokens.push(<span key={key++}>{remaining.slice(0, idx)}</span>); }
-          tokens.push(<span key={key++} className="text-brand-400 font-semibold">{kwMatch[0]}</span>);
+          tokens.push(<span key={key++} className="text-signal font-semibold">{kwMatch[0]}</span>);
           remaining = remaining.slice(idx + kwMatch[0].length);
         } else if (typeMatch && typeMatch.index !== undefined) {
           const idx = typeMatch.index;
           if (idx > 0) { tokens.push(<span key={key++}>{remaining.slice(0, idx)}</span>); }
-          tokens.push(<span key={key++} className="text-cyan-400">{typeMatch[0]}</span>);
+          tokens.push(<span key={key++} className="text-current">{typeMatch[0]}</span>);
           remaining = remaining.slice(idx + typeMatch[0].length);
         } else {
           tokens.push(<span key={key++}>{remaining}</span>);
@@ -58,22 +58,23 @@ function tokenize(code: string): ReactNode[] {
 type CodeBlockProps = {
   code: string;
   language?: string;
+  label?: React.ReactNode;
   caption?: React.ReactNode;
 };
 
-export function CodeBlock({ code, language = "solidity", caption }: CodeBlockProps) {
+export function CodeBlock({ code, language = "solidity", label, caption }: CodeBlockProps) {
   return (
-    <div className="rounded-xl border border-brand-500/15 bg-bg-deep/90 overflow-hidden">
-      {language && (
-        <div className="px-5 py-2 border-b border-brand-500/10 text-[0.7rem] text-text-muted font-semibold tracking-wider uppercase">
-          {language}
+    <div className="rounded-xl border border-rail bg-ink/90 overflow-hidden">
+      {(language || label) && (
+        <div className="px-5 py-2.5 border-b border-rail/60 text-[0.7rem] text-slate font-semibold tracking-wider uppercase">
+          {label ?? language}
         </div>
       )}
-      <pre className="p-5 overflow-x-auto text-[0.8rem] leading-[1.6] font-mono text-text-primary">
+      <pre className="p-5 overflow-x-auto text-[0.8rem] leading-[1.6] font-mono text-paper">
         <code>{tokenize(code)}</code>
       </pre>
       {caption && (
-        <div className="px-5 py-2.5 border-t border-brand-500/10 text-[0.75rem] text-text-muted">
+        <div className="px-5 py-2.5 border-t border-rail/60 text-[0.75rem] text-slate leading-[1.6]">
           {caption}
         </div>
       )}

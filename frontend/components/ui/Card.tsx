@@ -7,9 +7,9 @@ export function Card({ children, hover = false, accent = false, className = "", 
   return (
     <div
       className={[
-        "rounded-2xl border border-brand-500/20 bg-bg-card/80 p-6",
-        accent && "bg-gradient-to-br from-bg-card/90 to-bg-deep/90",
-        hover && "transition-all duration-250 hover:-translate-y-1.5 hover:shadow-[0_24px_64px_rgba(0,102,255,0.18)] hover:border-brand-400/40",
+        "rounded-[var(--radius-panel)] border border-rail/60 bg-channel/80 p-6",
+        accent && "bg-gradient-to-br from-channel/90 to-ink/90",
+        hover && "transition-all duration-250 hover:-translate-y-1.5 hover:shadow-[0_24px_64px_rgba(232,163,61,0.12)] hover:border-signal/40",
         className,
       ].filter(Boolean).join(" ")}
       {...rest}
